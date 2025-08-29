@@ -1,33 +1,90 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-threaded Log Visualizer</title>
+    <meta charset="utf-8">
+    <title>openQA Log Analyzer</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; background-color: #fdfdfd; color: #333; }
+        h1, h2 { color: #444; }
+        form { margin-bottom: 2em; }
+        input[type="url"] { width: 50%; padding: 8px; }
+        button { padding: 8px 15px; }
+        pre { background-color: #f4f4f4; padding: 1em; border: 1px solid #ddd; white-space: pre-wrap; word-wrap: break-word; border-radius: 4px; }
+        #debug-frame { margin-top: 2em; }
+        .log-error { color: #D8000C; font-weight: bold; }
+        .log-debug { color: #666; }
+        .log-info { color: #00529B; }
+    </style>
 </head>
 <body>
-    <h1>Multi-threaded Log Visualizer</h1>
+    <h1>openQA Log Analyzer</h1>
     <form id="log-form">
-        <label for="log-path">Log File Path:</label>
-        <input type="text" id="log-path" name="log-path" required>
+        <label for="log_url">Log URL:</label>
+        <input type="url" id="log_url" name="log_url" size="100" value="https://openqa.suse.de/tests/18961558/logfile?filename=autoinst-log.txt#line-1515" required>
         <button type="submit">Analyze</button>
     </form>
-    <div id="visualization"></div>
+
+    <div id="results-frame">
+        <h2>Job Details</h2>
+        <pre id="job-details-content"></pre>
+    </div>
+
+    <div id="debug-frame">
+        <h2>Debug Log</h2>
+        <pre id="debug-log-content"></pre>
+    </div>
 
     <script>
-        document.getElementById('log-form').addEventListener('submit', async function(event) {
+        document.getElementById('log-form').addEventListener('submit', function(event) {
             event.preventDefault();
-            const logPath = document.getElementById('log-path').value;
-            const response = await fetch('/analyze', {
+            const logUrl = document.getElementById('log_url').value;
+            const jobDetailsContent = document.getElementById('job-details-content');
+            const debugLogContent = document.getElementById('debug-log-content');
+
+            // Clear previous results and show loading message
+            jobDetailsContent.textContent = 'Analyzing...';
+            debugLogContent.innerHTML = '';
+
+            fetch('/analyze', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ log_path: logPath })
+                body: JSON.stringify({ log_url: logUrl })
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Handle debug log first, as it should be present in both success and error responses
+                if (data.debug_log && Array.isArray(data.debug_log)) {
+                    data.debug_log.forEach(log => {
+                        const logEntry = document.createElement('div');
+                        logEntry.textContent = `[${log.level.toUpperCase()}] ${log.message}`;
+                        logEntry.className = `log-${log.level}`; // Assign class for styling
+                        debugLogContent.appendChild(logEntry);
+                    });
+                }
+
+                // Handle main content (job details or error)
+                if (data.error) {
+                    jobDetailsContent.textContent = `Error: ${data.error}`;
+                    if (data.raw_response) {
+                        jobDetailsContent.textContent += `\n\nRaw Response:\n${JSON.stringify(data.raw_response, null, 2)}`;
+                    }
+                } else if (data.job) {
+                    jobDetailsContent.textContent = JSON.stringify(data.job, null, 2);
+                } else {
+                    // Fallback for unexpected structure from a 2xx response
+                    jobDetailsContent.textContent = 'Received an unexpected response structure.\n\n' + JSON.stringify(data, null, 2);
+                }
+            })
+            .catch(error => {
+                console.error('Fetch Error:', error);
+                jobDetailsContent.textContent = 'A client-side error occurred. See debug log for details.';
+                const errorEntry = document.createElement('div');
+                errorEntry.textContent = `[FATAL] ${error.message}`;
+                errorEntry.className = 'log-error';
+                debugLogContent.appendChild(errorEntry);
             });
-            const visualization = await response.text();
-            document.getElementById('visualization').innerHTML = visualization;
         });
     </script>
 </body>
