@@ -112,6 +112,8 @@
         <label for="log_url">Log URL:</label>
         <input type="url" id="log_url" name="log_url" size="100" value="https://openqa.suse.de/tests/18961558/logfile?filename=autoinst-log.txt#line-1515" required>
         <button type="submit">Analyze</button>
+        <input type="checkbox" id="ignore_cache" name="ignore_cache">
+        <label for="ignore_cache">Ignore Cache</label>
     </form>
 
     <div id="timeline-frame">
@@ -138,6 +140,7 @@
         document.getElementById('log-form').addEventListener('submit', function(event) {
             event.preventDefault();
             const logUrl = document.getElementById('log_url').value;
+            const ignoreCache = document.getElementById('ignore_cache').checked;
             const jobDetailsContainer = document.getElementById('job-details-container');
             const timelineContainer = document.getElementById('timeline-container');
             const debugLogContent = document.getElementById('debug-log-content');
@@ -152,7 +155,7 @@
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ log_url: logUrl })
+                body: JSON.stringify({ log_url: logUrl, ignore_cache: ignoreCache })
             })
             .then(response => response.json())
             .then(data => {
@@ -200,6 +203,13 @@
                             title.append(` - Error fetching details`);
                         } else {
                             title.append(` - ${jobDetails.short_name}`);
+                            if (jobDetails.is_cached) {
+                                const cachedSpan = document.createElement('span');
+                                cachedSpan.textContent = ' [Cached]';
+                                cachedSpan.style.color = '#888';
+                                cachedSpan.style.fontStyle = 'italic';
+                                title.appendChild(cachedSpan);
+                            }
                         }
 
                         jobDiv.appendChild(title);

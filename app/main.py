@@ -13,6 +13,8 @@ import os
 
 app = Flask(__name__)
 
+CACHE_DIR = "./.cache"
+
 def parse_autoinst_log(log_content: str) -> list:
     """
     Parses the content of an autoinst-log.txt file to extract only the lines
@@ -102,6 +104,7 @@ def index():
 @app.route('/analyze', methods=['POST'])
 def analyze():
     log_url = request.json['log_url']
+    ignore_cache = request.json.get('ignore_cache', False)
     job_id = "unknown"
     hostname = None
     debug_log = []
@@ -109,6 +112,7 @@ def analyze():
         "api_calls": [],
         "log_downloads": [],
         "log_parsing": [],
+        "cache_hits": 0
     }
     try:
         app.logger.info(f"Received analysis request for URL: {log_url}")
@@ -132,9 +136,6 @@ def analyze():
         debug_log.append({"level": "warning", "message": "SSL certificate verification has been disabled. This is insecure."})
         app.logger.warning("SSL certificate verification has been disabled.")
 
-        debug_log.append({"level": "info", "message": f"Initialized OpenQA_Client for server: {hostname}"})
-        app.logger.info(f"Initialized OpenQA_Client for server: {hostname}")
-
         all_job_details = {}
         jobs_to_fetch = [job_id]
         fetched_jobs = set()
@@ -147,22 +148,69 @@ def analyze():
                 continue
             fetched_jobs.add(current_job_id)
 
-            debug_log.append({"level": "info", "message": f"Fetching details for job {current_job_id} from API..."})
-            app.logger.info(f"Fetching details for job {current_job_id} from API...")
-            try:
-                api_call_start = time.perf_counter()
-                job_details_response = client.openqa_request('GET', f"jobs/{current_job_id}")
-                api_call_end = time.perf_counter()
-                performance_metrics["api_calls"].append({"job_id": current_job_id, "duration": api_call_end - api_call_start})
-                job_details = job_details_response.get('job')
+            cache_host_dir = os.path.join(CACHE_DIR, hostname)
+            cache_file_path = os.path.join(cache_host_dir, f"{current_job_id}.json")
+            job_details = None
 
-                if not job_details:
-                    error_msg = f"Error: Could not find 'job' key in the API response for ID {current_job_id}."
-                    all_job_details[current_job_id] = {"error": error_msg, "job_url": f"https://{hostname}/t{current_job_id}"}
-                    debug_log.append({"level": "error", "message": error_msg})
-                    app.logger.error(f"{error_msg} Raw response: {job_details_response}")
+            if not ignore_cache and os.path.exists(cache_file_path):
+                debug_log.append({"level": "info", "message": f"Cache hit for job {current_job_id}."})
+                app.logger.info(f"Cache hit for job {current_job_id}.")
+                performance_metrics["cache_hits"] += 1
+                with open(cache_file_path, 'r') as f:
+                    cached_data = json.load(f)
+                    job_details = cached_data.get("job_details")
+                    log_content = cached_data.get("log_content")
+                    if job_details:
+                        job_details['is_cached'] = True
+                        if log_content:
+                            log_parsing_start = time.perf_counter()
+                            job_details['autoinst-log'] = parse_autoinst_log(log_content)
+                            log_parsing_end = time.perf_counter()
+                            performance_metrics["log_parsing"].append({"job_id": current_job_id, "duration": log_parsing_end - log_parsing_start})
+
+            if not job_details:
+                debug_log.append({"level": "info", "message": f"Cache miss for job {current_job_id}. Fetching from API..."})
+                try:
+                    api_call_start = time.perf_counter()
+                    job_details_response = client.openqa_request('GET', f"jobs/{current_job_id}")
+                    api_call_end = time.perf_counter()
+                    performance_metrics["api_calls"].append({"job_id": current_job_id, "duration": api_call_end - api_call_start})
+                    job_details = job_details_response.get('job')
+
+                    if not job_details:
+                        all_job_details[current_job_id] = {"error": f"Error: Could not find 'job' key in the API response for ID {current_job_id}."}
+                        continue
+                    
+                    job_details['is_cached'] = False
+
+                    if job_details.get('state') == 'done':
+                        log_file_url = f"https://{hostname}/tests/{current_job_id}/file/autoinst-log.txt"
+                        log_download_start = time.perf_counter()
+                        log_response = client.session.get(log_file_url, timeout=30)
+                        log_download_end = time.perf_counter()
+                        performance_metrics["log_downloads"].append({"job_id": current_job_id, "duration": log_download_end - log_download_start, "size_bytes": len(log_response.content)})
+                        log_response.raise_for_status()
+                        log_content = log_response.text
+                        
+                        log_parsing_start = time.perf_counter()
+                        job_details['autoinst-log'] = parse_autoinst_log(log_content)
+                        log_parsing_end = time.perf_counter()
+                        performance_metrics["log_parsing"].append({"job_id": current_job_id, "duration": log_parsing_end - log_parsing_start})
+
+                        os.makedirs(cache_host_dir, exist_ok=True)
+                        with open(cache_file_path, 'w') as f:
+                            json.dump({"job_details": job_details, "log_content": log_content}, f)
+                        debug_log.append({"level": "info", "message": f"Cached data for job {current_job_id}."})
+                    else:
+                        job_details['autoinst-log'] = f"INFO: Log not downloaded because job state is '{job_details.get('state')}'."
+
+                except RequestError as e:
+                    error_message = f"API Error from {hostname} for job {current_job_id}: Status {e.status_code} - {e.text}"
+                    all_job_details[current_job_id] = {"error": error_message}
+                    debug_log.append({"level": "error", "message": error_message})
                     continue
 
+            if job_details:
                 job_details['short_name'] = format_job_name(job_details.get('name', ''))
                 job_details['job_url'] = f"https://{hostname}/t{current_job_id}"
                 all_job_details[current_job_id] = job_details
@@ -170,51 +218,12 @@ def analyze():
                 for relation in ["children", "parents"]:
                     parallel_jobs = job_details.get(relation, {}).get("Parallel", [])
                     if parallel_jobs:
-                        debug_log.append({"level": "info", "message": f"Found parallel {relation} for {current_job_id}: {parallel_jobs}"})
-                        app.logger.info(f"Found parallel {relation} for {current_job_id}: {parallel_jobs}")
                         for parallel_id in parallel_jobs:
                             if str(parallel_id) not in fetched_jobs:
                                 jobs_to_fetch.append(str(parallel_id))
 
-            except RequestError as e:
-                error_message = f"API Error from {hostname} for job {current_job_id}: Status {e.status_code} - {e.text}"
-                all_job_details[current_job_id] = {"error": error_message, "job_url": f"https://{hostname}/t{current_job_id}"}
-                debug_log.append({"level": "error", "message": error_message})
-                app.logger.error(error_message)
-                continue
         discovery_loop_end = time.perf_counter()
         performance_metrics["discovery_loop_duration"] = discovery_loop_end - discovery_loop_start
-
-        log_processing_start = time.perf_counter()
-        for job_id_key, job_details in all_job_details.items():
-            if job_details.get('state') == 'done':
-                log_file_url = f"https://{hostname}/tests/{job_id_key}/file/autoinst-log.txt"
-                debug_log.append({"level": "info", "message": f"Downloading log for job {job_id_key} from {log_file_url}"})
-                app.logger.info(f"Downloading log for job {job_id_key} from {log_file_url}")
-                try:
-                    log_download_start = time.perf_counter()
-                    log_response = client.session.get(log_file_url, timeout=30)
-                    log_download_end = time.perf_counter()
-                    performance_metrics["log_downloads"].append({"job_id": job_id_key, "duration": log_download_end - log_download_start, "size_bytes": len(log_response.content)})
-                    log_response.raise_for_status()
-                    log_parsing_start = time.perf_counter()
-                    job_details['autoinst-log'] = parse_autoinst_log(log_response.text)
-                    log_parsing_end = time.perf_counter()
-                    performance_metrics["log_parsing"].append({"job_id": job_id_key, "duration": log_parsing_end - log_parsing_start})
-                    debug_log.append({"level": "info", "message": f"Successfully downloaded and parsed log for job {job_id_key}."})
-                    app.logger.info(f"Successfully downloaded and parsed log for job {job_id_key}.")
-                except requests.exceptions.RequestException as log_e:
-                    error_msg = f"Failed to download log for job {job_id_key}: {log_e}"
-                    job_details['autoinst-log'] = f"ERROR: {error_msg}"
-                    debug_log.append({"level": "error", "message": error_msg})
-                    app.logger.error(error_msg)
-            else:
-                error_msg = f"Log not downloaded for job {job_id_key} because its state is '{job_details.get('state')}' and not 'done'."
-                job_details['autoinst-log'] = f"INFO: {error_msg}"
-                debug_log.append({"level": "info", "message": error_msg})
-                app.logger.info(error_msg)
-        log_processing_end = time.perf_counter()
-        performance_metrics["log_processing_duration"] = log_processing_end - log_processing_start
 
         timeline_creation_start = time.perf_counter()
         timeline_events = []
@@ -243,11 +252,6 @@ def analyze():
 
         app.logger.info(f"Successfully fetched details for jobs: {list(all_job_details.keys())}")
         return jsonify(response_data)
-    except RequestError as e:
-        error_message = f"API Error from {hostname} for job {job_id}: Status {e.status_code} - {e.text}"
-        debug_log.append({"level": "error", "message": error_message})
-        app.logger.error(error_message)
-        return jsonify({"error": error_message, "debug_log": debug_log}), e.status_code
     except Exception as e:
         error_message = f"An unexpected error occurred: {e}"
         if hostname:
