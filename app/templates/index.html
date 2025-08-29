@@ -30,6 +30,8 @@
             background-color: #fff3cd !important;
             transition: background-color 0.5s ease;
         }
+        #timeline-frame h2 { display: inline-block; }
+        #reset-zoom-btn { margin-left: 1em; display: none; }
         #timeline-container {
             position: relative;
             font-family: monospace;
@@ -48,6 +50,47 @@
             padding: 5px 10px; border-radius: 4px; pointer-events: none;
             opacity: 0; transition: opacity 0.2s; white-space: pre-wrap;
             max-width: 500px; z-index: 10;
+        }
+        .timeline-selection {
+            position: absolute;
+            background-color: rgba(0, 123, 255, 0.2);
+            border: 1px solid rgba(0, 123, 255, 0.5);
+            pointer-events: none;
+            z-index: 20;
+        }
+        .timeline-legend {
+            margin-top: 1em;
+            display: flex;
+            justify-content: center;
+            gap: 1em;
+            font-family: sans-serif;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+        }
+        .legend-color {
+            width: 15px;
+            height: 15px;
+            margin-right: 5px;
+            border: 1px solid #666;
+        }
+        .timeline-legend {
+            margin-top: 1em;
+            display: flex;
+            justify-content: center;
+            gap: 1em;
+            font-family: sans-serif;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+        }
+        .legend-color {
+            width: 15px;
+            height: 15px;
+            margin-right: 5px;
+            border: 1px solid #666;
         }
         details {
             border: 1px solid #ddd;
@@ -73,7 +116,9 @@
 
     <div id="timeline-frame">
         <h2>Merged Timeline</h2>
-        <div id="timeline-container"></div>
+        <button id="reset-zoom-btn">Reset Zoom</button>
+        <div id="timeline-container" style="position: relative;"></div>
+        <div id="timeline-legend" class="timeline-legend"></div>
     </div>
 
     <div id="results-frame">
@@ -125,7 +170,7 @@
 
                 // Handle timeline visualization
                 if (data.timeline_events && data.timeline_events.length > 0) {
-                    renderTimeline(data.timeline_events, data.jobs, 'timeline-container');
+                    setupTimeline(data.timeline_events, data.jobs, 'timeline-container');
                 } else {
                     timelineContainer.innerHTML = '<p>No timeline events to display.</p>';
                 }
@@ -159,6 +204,24 @@
 
                         jobDiv.appendChild(title);
 
+                        // Create a non-collapsible table for result, reason, and state
+                        const resultTable = document.createElement('table');
+                        const tbody = document.createElement('tbody');
+                        const resultFields = ['result', 'reason', 'state'];
+                        resultFields.forEach(field => {
+                            if (jobDetails[field]) {
+                                const row = tbody.insertRow();
+                                const keyCell = row.insertCell();
+                                keyCell.textContent = field.charAt(0).toUpperCase() + field.slice(1);
+                                keyCell.className = 'settings-key';
+                                const valueCell = row.insertCell();
+                                valueCell.textContent = jobDetails[field];
+                                valueCell.className = 'settings-value';
+                            }
+                        });
+                        resultTable.appendChild(tbody);
+                        jobDiv.appendChild(resultTable);
+
                         // Separate specific fields to be collapsible
                         const autoinstLog = jobDetails['autoinst-log'];
                         const settings = jobDetails['settings'];
@@ -167,6 +230,10 @@
                         const otherDetails = { ...jobDetails };
                         delete otherDetails['autoinst-log'];
                         delete otherDetails['settings'];
+                        delete otherDetails['result'];
+                        delete otherDetails['reason'];
+                        delete otherDetails['state'];
+
 
                         if (settings) {
                             jobDiv.appendChild(createCollapsibleSection('Settings', settings));
@@ -202,9 +269,103 @@
             });
         });
 
-        function renderTimeline(events, jobs, containerId) {
+        function setupTimeline(allEvents, jobs, containerId) {
             const container = document.getElementById(containerId);
-            container.innerHTML = ''; // Clear previous timeline
+            const resetButton = document.getElementById('reset-zoom-btn');
+
+            const fullStartTime = new Date(allEvents[0].timestamp).getTime();
+            const fullEndTime = new Date(allEvents[allEvents.length - 1].timestamp).getTime();
+
+            let currentStartTime = fullStartTime;
+            let currentEndTime = fullEndTime;
+
+            function renderCurrentView() {
+                renderTimeline(allEvents, jobs, container, currentStartTime, currentEndTime);
+            }
+
+            resetButton.addEventListener('click', () => {
+                currentStartTime = fullStartTime;
+                currentEndTime = fullEndTime;
+                renderCurrentView();
+                resetButton.style.display = 'none';
+            });
+
+            let selectionRect = null;
+            let startX = 0;
+            let isDragging = false;
+
+            container.addEventListener('mousedown', (e) => {
+                const svg = container.querySelector('.timeline-svg');
+                if (!svg || e.target.tagName.toLowerCase() !== 'svg') return;
+
+                const gRect = svg.querySelector('g').getBoundingClientRect();
+                if (e.clientX < gRect.left || e.clientX > gRect.right) {
+                    return;
+                }
+
+                isDragging = true;
+                const svgRect = svg.getBoundingClientRect();
+                startX = e.clientX - svgRect.left;
+
+                selectionRect = document.createElement('div');
+                selectionRect.className = 'timeline-selection';
+                selectionRect.style.left = `${startX}px`;
+                selectionRect.style.top = `${gRect.top - svgRect.top}px`;
+                selectionRect.style.height = `${gRect.height}px`;
+                selectionRect.style.width = '0px';
+                container.appendChild(selectionRect);
+                e.preventDefault();
+            });
+
+            container.addEventListener('mousemove', (e) => {
+                if (!isDragging || !selectionRect) return;
+                const svg = container.querySelector('.timeline-svg');
+                const svgRect = svg.getBoundingClientRect();
+                const currentX = e.clientX - svgRect.left;
+                selectionRect.style.width = `${Math.abs(currentX - startX)}px`;
+                selectionRect.style.left = `${Math.min(currentX, startX)}px`;
+            });
+
+            container.addEventListener('mouseup', (e) => {
+                if (!isDragging) return;
+                isDragging = false;
+
+                const svg = container.querySelector('.timeline-svg');
+                const svgRect = svg.getBoundingClientRect();
+                const endX = e.clientX - svgRect.left;
+
+                if (selectionRect) {
+                    container.removeChild(selectionRect);
+                    selectionRect = null;
+                }
+
+                if (Math.abs(endX - startX) < 10) return;
+
+                const gTransform = svg.querySelector('g').getAttribute('transform');
+                const marginLeft = parseFloat(gTransform.match(/translate\(([\d.]+)/)[1]);
+                const marginRight = 50;
+                const chartWidth = svgRect.width - marginLeft - marginRight;
+
+                const timeDomain = currentEndTime - currentStartTime;
+
+                const startPos = Math.max(0, Math.min(startX, endX) - marginLeft);
+                const endPos = Math.min(chartWidth, Math.max(startX, endX) - marginLeft);
+
+                const newStartTime = currentStartTime + (startPos / chartWidth) * timeDomain;
+                const newEndTime = currentStartTime + (endPos / chartWidth) * timeDomain;
+
+                currentStartTime = newStartTime;
+                currentEndTime = newEndTime;
+
+                renderCurrentView();
+                resetButton.style.display = 'inline-block';
+            });
+
+            renderCurrentView();
+        }
+
+        function renderTimeline(allEvents, jobs, container, startTime, endTime) {
+            container.innerHTML = '';
 
             const getShortName = (jobId) => {
                 if (jobs && jobs[jobId] && jobs[jobId].short_name) {
@@ -213,7 +374,12 @@
                 return jobId; // Fallback to job id if not found
             };
 
-            const participants = [...new Set(events.map(e => getShortName(e.job_id)))].sort();
+            const events = allEvents.filter(e => {
+                const t = new Date(e.timestamp).getTime();
+                return t >= startTime && t <= endTime;
+            });
+
+            const participants = [...new Set(allEvents.map(e => getShortName(e.job_id)))].sort();
             const margin = { top: 20, right: 50, bottom: 40, left: 120 };
             const width = container.clientWidth - margin.left - margin.right;
             const height = participants.length * 40 + margin.top + margin.bottom;
@@ -229,14 +395,12 @@
             svg.appendChild(g);
 
             // Time scale
-            const firstEventTime = new Date(events[0].timestamp).getTime();
-            const lastEventTime = new Date(events[events.length - 1].timestamp).getTime();
-            const timeDomain = lastEventTime - firstEventTime;
+            const timeDomain = endTime - startTime;
 
             const xScale = (timestamp) => {
                 const eventTime = new Date(timestamp).getTime();
                 if (timeDomain === 0) return width / 2;
-                return ((eventTime - firstEventTime) / timeDomain) * width;
+                return ((eventTime - startTime) / timeDomain) * width;
             };
 
             // Participant scale (Y-axis)
@@ -280,14 +444,14 @@
             const startLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
             startLabel.setAttribute('x', 0);
             startLabel.setAttribute('y', 20);
-            startLabel.textContent = new Date(firstEventTime).toLocaleTimeString();
+            startLabel.textContent = new Date(startTime).toLocaleTimeString();
             timeAxis.appendChild(startLabel);
 
             const endLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
             endLabel.setAttribute('x', width);
             endLabel.setAttribute('y', 20);
             endLabel.setAttribute('text-anchor', 'end');
-            endLabel.textContent = new Date(lastEventTime).toLocaleTimeString();
+            endLabel.textContent = new Date(endTime).toLocaleTimeString();
             timeAxis.appendChild(endLabel);
 
             // Tooltip
@@ -297,13 +461,20 @@
 
             // Draw events
             events.forEach(event => {
-                const shortName = getShortName(event.job_id);
                 const x = xScale(event.timestamp);
+                const shortName = getShortName(event.job_id);
                 const y = yScale(shortName);
-                let color = '#007bff'; // blue default
-                if (event.message.includes('lock')) color = '#28a745'; // green
-                if (event.message.includes('unlock')) color = '#17a2b8'; // cyan
-                if (event.message.includes('not released')) color = '#dc3545'; // red
+                
+                let color = '#007bff'; // Default: blue
+                if (event.message.toLowerCase().includes('mutex')) {
+                    color = '#28a745'; // Mutex: green
+                } else if (event.message.toLowerCase().includes('barrier')) {
+                    color = '#fd7e14'; // Barrier: orange
+                } else if (event.message.toLowerCase().includes('module')) {
+                    color = '#6f42c1'; // Module: purple
+                } else if (event.message.toLowerCase().includes('error')) {
+                    color = '#dc3545'; // Error: red
+                }
 
                 const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
                 circle.setAttribute('cx', x);
@@ -341,6 +512,34 @@
                         targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
                     }
                 });
+            });
+
+            // Add Legend
+            const legendContainer = document.getElementById('timeline-legend');
+            legendContainer.innerHTML = ''; // Clear previous legend
+            const legendData = [
+                { color: '#28a745', label: 'Mutex' },
+                { color: '#fd7e14', label: 'Barrier' },
+                { color: '#6f42c1', label: 'Module' },
+                { color: '#ffc107', label: 'Waiting' },
+                { color: '#dc3545', label: 'Error' },
+                { color: '#007bff', label: 'Other' }
+            ];
+
+            legendData.forEach(item => {
+                const legendItem = document.createElement('div');
+                legendItem.className = 'legend-item';
+
+                const colorBox = document.createElement('div');
+                colorBox.className = 'legend-color';
+                colorBox.style.backgroundColor = item.color;
+
+                const label = document.createElement('span');
+                label.textContent = item.label;
+
+                legendItem.appendChild(colorBox);
+                legendItem.appendChild(label);
+                legendContainer.appendChild(legendItem);
             });
         }
 
