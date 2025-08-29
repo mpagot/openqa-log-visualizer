@@ -12,31 +12,51 @@ app = Flask(__name__)
 def parse_autoinst_log(log_content: str) -> list:
     """
     Parses the content of an autoinst-log.txt file to extract only the lines
-    containing specific keywords related to barriers and mutexes.
+    containing specific keywords related to barriers and mutexes. It also
+    extracts the name of the barrier or mutex if present.
 
     Args:
         log_content: The full string content of the log file.
 
     Returns:
         A list of dictionaries, where each dictionary represents a relevant
-        log line and contains its timestamp and full message.
+        log line and contains its timestamp, message, and optionally the
+        barrier/mutex name.
     """
     parsed_log = []
-    log_keywords = [
-        "Waiting for barriers creation", "mutex lock", "mutex unlock",
-        "Waiting for barrier", "barrier wait", "barrier not released"
+    log_patterns = [
+        # Patterns with named group 'name' to extract the barrier/mutex identifier
+        re.compile(r"mutex create '(?P<mutex>[^']+)'"),
+        re.compile(r"mutex lock '(?P<mutex>[^']+)'"),
+        re.compile(r"mutex unlock '(?P<mutex>[^']+)'"),
+        re.compile(r"barrier create '(?P<barrier>[^']+)'"),
+        re.compile(r"barrier wait '(?P<barrier>[^']+)'"),
+        re.compile(r"barrier '(?P<barrier>[^']+)' not released"),
+        re.compile(r"Waiting for barrier (?P<barrier>\w+)..."),
+        # Pattern without a name
+        re.compile(r"Waiting for barriers creation"),
     ]
     timestamp_re = re.compile(r'^\[([^\]]+)\]')
     for line in log_content.splitlines():
-        if any(keyword in line for keyword in log_keywords):
-            match = timestamp_re.match(line)
-            if match:
-                timestamp = match.group(1)
-                message = line[len(match.group(0)) :].strip()
-            else:
-                timestamp = "unknown"
-                message = line.strip()
-            parsed_log.append({"timestamp": timestamp, "message": message})
+        for pattern in log_patterns:
+            search_match = pattern.search(line)
+            if search_match:
+                timestamp_match = timestamp_re.match(line)
+                if timestamp_match:
+                    timestamp = timestamp_match.group(1)
+                    message = line[len(timestamp_match.group(0)):].strip()
+                else:
+                    timestamp = "unknown"
+                    message = line.strip()
+
+                log_entry = {"timestamp": timestamp, "message": message}
+                group_dict = search_match.groupdict()
+
+                for group_name in ['mutex', 'barrier']:
+                    if group_name in group_dict:
+                        log_entry[group_name] = group_dict[group_name]
+                parsed_log.append(log_entry)
+                break  # Found a match, go to the next line
     return parsed_log
 
 def format_job_name(full_name: str) -> str:
@@ -165,8 +185,31 @@ def analyze():
                 app.logger.error(error_message)
                 continue
 
+        # After fetching all jobs, create a unified timeline
+        timeline_events = []
+        for job_id_key, details in all_job_details.items():
+            if not details.get('error') and 'autoinst-log' in details:
+                log_data = details['autoinst-log']
+                if isinstance(log_data, list):
+                    for index, log_entry in enumerate(log_data):
+                        event_data = {
+                            'timestamp': log_entry['timestamp'],
+                            'message': log_entry['message'],
+                            'job_id': job_id_key,
+                            'log_index': index
+                        }
+                        if 'mutex' in log_entry:
+                            event_data['mutex'] = log_entry['mutex']
+                        if 'barrier' in log_entry:
+                            event_data['barrier'] = log_entry['barrier']
+                        timeline_events.append(event_data)
+
+        # Sort events chronologically
+        if timeline_events:
+            timeline_events.sort(key=lambda x: x['timestamp'])
+
         app.logger.info(f"Successfully fetched details for jobs: {list(all_job_details.keys())}")
-        return jsonify({"jobs": all_job_details, "debug_log": debug_log})
+        return jsonify({"jobs": all_job_details, "debug_log": debug_log, "timeline_events": timeline_events})
     except RequestError as e:
         error_message = f"API Error from {hostname} for job {job_id}: Status {e.status_code} - {e.text}"
         debug_log.append({"level": "error", "message": error_message})

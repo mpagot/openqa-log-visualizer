@@ -20,6 +20,35 @@
         th { background-color: #f2f2f2; font-weight: bold; }
         .settings-key { font-weight: bold; font-family: sans-serif; width: 25%; }
         .settings-value { font-family: monospace; white-space: pre-wrap; }
+        .autoinst-log-table .col-timestamp,
+        .autoinst-log-table .col-mutex,
+        .autoinst-log-table .col-barrier {
+            width: 1%;
+            white-space: nowrap;
+        }
+        .highlighted-row {
+            background-color: #fff3cd !important;
+            transition: background-color 0.5s ease;
+        }
+        #timeline-container {
+            position: relative;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .timeline-svg {
+            width: 100%;
+            border: 1px solid #ccc;
+            background-color: #fdfdfd;
+        }
+        .timeline-participant-label { font-weight: bold; }
+        .timeline-event-marker { cursor: pointer; }
+        .timeline-event-marker:hover { stroke: black; stroke-width: 2px; }
+        .timeline-tooltip {
+            position: absolute; background-color: #333; color: white;
+            padding: 5px 10px; border-radius: 4px; pointer-events: none;
+            opacity: 0; transition: opacity 0.2s; white-space: pre-wrap;
+            max-width: 500px; z-index: 10;
+        }
         details {
             border: 1px solid #ddd;
             border-radius: 4px;
@@ -42,6 +71,11 @@
         <button type="submit">Analyze</button>
     </form>
 
+    <div id="timeline-frame">
+        <h2>Merged Timeline</h2>
+        <div id="timeline-container"></div>
+    </div>
+
     <div id="results-frame">
         <h2>Job Details</h2>
         <div id="job-details-container">
@@ -55,14 +89,17 @@
     </div>
 
     <script>
+        let highlightedRow = null;
         document.getElementById('log-form').addEventListener('submit', function(event) {
             event.preventDefault();
             const logUrl = document.getElementById('log_url').value;
             const jobDetailsContainer = document.getElementById('job-details-container');
+            const timelineContainer = document.getElementById('timeline-container');
             const debugLogContent = document.getElementById('debug-log-content');
 
             // Clear previous results and show loading message
             jobDetailsContainer.innerHTML = '<pre>Analyzing...</pre>';
+            timelineContainer.innerHTML = '';
             debugLogContent.innerHTML = '';
 
             fetch('/analyze', {
@@ -84,6 +121,13 @@
                         logEntry.className = `log-${log.level}`; // Assign class for styling
                         debugLogContent.appendChild(logEntry);
                     });
+                }
+
+                // Handle timeline visualization
+                if (data.timeline_events && data.timeline_events.length > 0) {
+                    renderTimeline(data.timeline_events, data.jobs, 'timeline-container');
+                } else {
+                    timelineContainer.innerHTML = '<p>No timeline events to display.</p>';
                 }
 
                 // Handle main content (job details or error)
@@ -129,7 +173,9 @@
                         }
 
                         if (autoinstLog) {
-                            jobDiv.appendChild(createCollapsibleSection('autoinst-log', autoinstLog));
+                            const logSection = createCollapsibleSection('autoinst-log', autoinstLog, jobId);
+                            logSection.id = `autoinst-log-${jobId}`;
+                            jobDiv.appendChild(logSection);
                         }
 
                         // Display the rest of the details
@@ -156,7 +202,157 @@
             });
         });
 
-        function createCollapsibleSection(title, content) {
+        function renderTimeline(events, jobs, containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = ''; // Clear previous timeline
+
+            const getShortName = (jobId) => {
+                if (jobs && jobs[jobId] && jobs[jobId].short_name) {
+                    return jobs[jobId].short_name;
+                }
+                return jobId; // Fallback to job id if not found
+            };
+
+            const participants = [...new Set(events.map(e => getShortName(e.job_id)))].sort();
+            const margin = { top: 20, right: 50, bottom: 40, left: 120 };
+            const width = container.clientWidth - margin.left - margin.right;
+            const height = participants.length * 40 + margin.top + margin.bottom;
+
+            const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            svg.setAttribute('class', 'timeline-svg');
+            svg.setAttribute('width', width + margin.left + margin.right);
+            svg.setAttribute('height', height);
+            container.appendChild(svg);
+
+            const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            g.setAttribute('transform', `translate(${margin.left},${margin.top})`);
+            svg.appendChild(g);
+
+            // Time scale
+            const firstEventTime = new Date(events[0].timestamp).getTime();
+            const lastEventTime = new Date(events[events.length - 1].timestamp).getTime();
+            const timeDomain = lastEventTime - firstEventTime;
+
+            const xScale = (timestamp) => {
+                const eventTime = new Date(timestamp).getTime();
+                if (timeDomain === 0) return width / 2;
+                return ((eventTime - firstEventTime) / timeDomain) * width;
+            };
+
+            // Participant scale (Y-axis)
+            const yScale = (participant) => {
+                return participants.indexOf(participant) * 40 + 20;
+            };
+
+            // Draw participant labels and lifelines
+            participants.forEach(p => {
+                const y = yScale(p);
+                const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                label.setAttribute('x', -10);
+                label.setAttribute('y', y);
+                label.setAttribute('text-anchor', 'end');
+                label.setAttribute('dominant-baseline', 'middle');
+                label.setAttribute('class', 'timeline-participant-label');
+                label.textContent = p;
+                g.appendChild(label);
+
+                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                line.setAttribute('x1', 0);
+                line.setAttribute('x2', width);
+                line.setAttribute('y1', y);
+                line.setAttribute('y2', y);
+                line.setAttribute('stroke', '#ccc');
+                line.setAttribute('stroke-dasharray', '2,2');
+                g.appendChild(line);
+            });
+
+            // Draw time axis
+            const timeAxis = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            timeAxis.setAttribute('transform', `translate(0, ${height - margin.top - margin.bottom + 10})`);
+            g.appendChild(timeAxis);
+
+            const axisLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            axisLine.setAttribute('x1', 0);
+            axisLine.setAttribute('x2', width);
+            axisLine.setAttribute('stroke', 'black');
+            timeAxis.appendChild(axisLine);
+
+            const startLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            startLabel.setAttribute('x', 0);
+            startLabel.setAttribute('y', 20);
+            startLabel.textContent = new Date(firstEventTime).toLocaleTimeString();
+            timeAxis.appendChild(startLabel);
+
+            const endLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            endLabel.setAttribute('x', width);
+            endLabel.setAttribute('y', 20);
+            endLabel.setAttribute('text-anchor', 'end');
+            endLabel.textContent = new Date(lastEventTime).toLocaleTimeString();
+            timeAxis.appendChild(endLabel);
+
+            // Tooltip
+            const tooltip = document.createElement('div');
+            tooltip.className = 'timeline-tooltip';
+            container.appendChild(tooltip);
+
+            // Draw events
+            events.forEach(event => {
+                const shortName = getShortName(event.job_id);
+                const x = xScale(event.timestamp);
+                const y = yScale(shortName);
+                let color = '#007bff'; // blue default
+                if (event.message.includes('lock')) color = '#28a745'; // green
+                if (event.message.includes('unlock')) color = '#17a2b8'; // cyan
+                if (event.message.includes('not released')) color = '#dc3545'; // red
+
+                const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                circle.setAttribute('cx', x);
+                circle.setAttribute('cy', y);
+                circle.setAttribute('r', 5);
+                circle.setAttribute('fill', color);
+                circle.setAttribute('class', 'timeline-event-marker');
+                g.appendChild(circle);
+
+                circle.addEventListener('mouseover', (e) => {
+                    tooltip.style.opacity = '1';
+                    tooltip.innerHTML = `<strong>${event.timestamp}</strong><br>${shortName}<br>${cleanLogMessage(event.message)}`;
+                });
+                circle.addEventListener('mousemove', (e) => {
+                    const rect = container.getBoundingClientRect();
+                    tooltip.style.left = `${e.clientX - rect.left + 15}px`;
+                    tooltip.style.top = `${e.clientY - rect.top + 15}px`;
+                });
+                circle.addEventListener('mouseout', () => {
+                    tooltip.style.opacity = '0';
+                });
+
+                circle.addEventListener('click', () => {
+                    if (highlightedRow) {
+                        highlightedRow.classList.remove('highlighted-row');
+                    }
+
+                    const targetElement = document.getElementById(`autoinst-log-${event.job_id}`);
+                    const targetRow = document.getElementById(`log-row-${event.job_id}-${event.log_index}`);
+
+                    if (targetElement && targetRow) {
+                        targetRow.classList.add('highlighted-row');
+                        highlightedRow = targetRow;
+                        targetElement.open = true; // Ensure the section is expanded
+                        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                });
+            });
+        }
+
+        function cleanLogMessage(message) {
+            // Remove ANSI escape codes (e.g., \u001b[37m)
+            let cleaned = message.replace(/\u001b\[.*?m/g, '');
+            // Remove the log prefix (e.g., [debug] [pid:12345])
+            cleaned = cleaned.replace(/^\[\w+\]\s\[pid:\d+\]\s*/, '');
+            return cleaned;
+        }
+
+        function createCollapsibleSection(title, content, jobId) {
             const details = document.createElement('details');
             const summary = document.createElement('summary');
             summary.textContent = title;
@@ -188,20 +384,42 @@
                 table.appendChild(tbody);
                 details.appendChild(table);
             } else if (title === 'autoinst-log' && Array.isArray(content)) {
+                table.className = 'autoinst-log-table';
                 const thead = document.createElement('thead');
                 const headerRow = thead.insertRow();
-                headerRow.insertCell().outerHTML = '<th>Timestamp</th>';
-                headerRow.insertCell().outerHTML = '<th>Message</th>';
+                const columns = [
+                    { name: 'Timestamp', key: 'timestamp', class: 'col-timestamp' },
+                    { name: 'Mutex', key: 'mutex', class: 'col-mutex' },
+                    { name: 'Barrier', key: 'barrier', class: 'col-barrier' },
+                    { name: 'Message', key: 'message', class: 'col-message' }
+                ];
+
+                columns.forEach(col => {
+                    const th = document.createElement('th');
+                    th.textContent = col.name;
+                    th.className = col.class;
+                    headerRow.appendChild(th);
+                });
                 table.appendChild(thead);
  
                 const tbody = document.createElement('tbody');
-                for (const logEntry of content) {
+                content.forEach((logEntry, index) => {
                     const row = tbody.insertRow();
-                    row.insertCell().textContent = logEntry.timestamp;
-                    row.insertCell().textContent = logEntry.message;
-                }
+                    row.id = `log-row-${jobId}-${index}`;
+                    columns.forEach(col => {
+                        const cell = row.insertCell();
+                        cell.textContent = logEntry[col.key] || '';
+                        cell.className = col.class;
+                    });
+                });
                 table.appendChild(tbody);
                 details.appendChild(table);
+                details.addEventListener('toggle', () => {
+                    if (!details.open && highlightedRow && details.contains(highlightedRow)) {
+                        highlightedRow.classList.remove('highlighted-row');
+                        highlightedRow = null;
+                    }
+                });
             } else {
                 // Fallback to <pre> for other content
                 const pre = document.createElement('pre');
