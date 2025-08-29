@@ -14,6 +14,24 @@
         .log-error { color: #D8000C; font-weight: bold; }
         .log-debug { color: #666; }
         .log-info { color: #00529B; }
+        .job-entry { margin-bottom: 2em; border: 1px solid #ccc; padding: 1em; border-radius: 4px; }
+        table { border-collapse: collapse; width: 100%; margin-top: 0.5em; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; word-break: break-word; }
+        th { background-color: #f2f2f2; font-weight: bold; }
+        .settings-key { font-weight: bold; font-family: sans-serif; width: 25%; }
+        .settings-value { font-family: monospace; white-space: pre-wrap; }
+        details {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 0.5em;
+            margin-top: 1em;
+            background-color: #f9f9f9;
+        }
+        summary {
+            font-weight: bold;
+            cursor: pointer;
+            padding: 0.2em;
+        }
     </style>
 </head>
 <body>
@@ -26,7 +44,9 @@
 
     <div id="results-frame">
         <h2>Job Details</h2>
-        <pre id="job-details-content"></pre>
+        <div id="job-details-container">
+            <pre id="job-details-content"></pre>
+        </div>
     </div>
 
     <div id="debug-frame">
@@ -38,11 +58,11 @@
         document.getElementById('log-form').addEventListener('submit', function(event) {
             event.preventDefault();
             const logUrl = document.getElementById('log_url').value;
-            const jobDetailsContent = document.getElementById('job-details-content');
+            const jobDetailsContainer = document.getElementById('job-details-container');
             const debugLogContent = document.getElementById('debug-log-content');
 
             // Clear previous results and show loading message
-            jobDetailsContent.textContent = 'Analyzing...';
+            jobDetailsContainer.innerHTML = '<pre>Analyzing...</pre>';
             debugLogContent.innerHTML = '';
 
             fetch('/analyze', {
@@ -54,6 +74,8 @@
             })
             .then(response => response.json())
             .then(data => {
+                jobDetailsContainer.innerHTML = ''; // Clear 'Analyzing...' message
+
                 // Handle debug log first, as it should be present in both success and error responses
                 if (data.debug_log && Array.isArray(data.debug_log)) {
                     data.debug_log.forEach(log => {
@@ -66,26 +88,128 @@
 
                 // Handle main content (job details or error)
                 if (data.error) {
-                    jobDetailsContent.textContent = `Error: ${data.error}`;
-                    if (data.raw_response) {
-                        jobDetailsContent.textContent += `\n\nRaw Response:\n${JSON.stringify(data.raw_response, null, 2)}`;
+                    const errorPre = document.createElement('pre');
+                    errorPre.textContent = `Error: ${data.error}`;
+                    jobDetailsContainer.appendChild(errorPre);
+                } else if (data.jobs) {
+                    for (const jobId in data.jobs) {
+                        const jobDetails = data.jobs[jobId];
+
+                        const jobDiv = document.createElement('div');
+                        jobDiv.className = 'job-entry';
+
+                        const title = document.createElement('h3');
+                        const jobLink = document.createElement('a');
+                        jobLink.href = jobDetails.job_url;
+                        jobLink.textContent = jobId;
+                        jobLink.target = '_blank';
+                        jobLink.rel = 'noopener noreferrer';
+
+                        title.appendChild(jobLink);
+
+                        if (jobDetails.error) {
+                            title.append(` - Error fetching details`);
+                        } else {
+                            title.append(` - ${jobDetails.short_name}`);
+                        }
+
+                        jobDiv.appendChild(title);
+
+                        // Separate specific fields to be collapsible
+                        const autoinstLog = jobDetails['autoinst-log'];
+                        const settings = jobDetails['settings'];
+
+                        // Create a copy of jobDetails to show the rest
+                        const otherDetails = { ...jobDetails };
+                        delete otherDetails['autoinst-log'];
+                        delete otherDetails['settings'];
+
+                        if (settings) {
+                            jobDiv.appendChild(createCollapsibleSection('Settings', settings));
+                        }
+
+                        if (autoinstLog) {
+                            jobDiv.appendChild(createCollapsibleSection('autoinst-log', autoinstLog));
+                        }
+
+                        // Display the rest of the details
+                        const otherDetailsPre = document.createElement('pre');
+                        otherDetailsPre.textContent = JSON.stringify(otherDetails, null, 2);
+                        jobDiv.appendChild(otherDetailsPre);
+
+                        jobDetailsContainer.appendChild(jobDiv);
                     }
-                } else if (data.job) {
-                    jobDetailsContent.textContent = JSON.stringify(data.job, null, 2);
                 } else {
                     // Fallback for unexpected structure from a 2xx response
-                    jobDetailsContent.textContent = 'Received an unexpected response structure.\n\n' + JSON.stringify(data, null, 2);
+                    const fallbackPre = document.createElement('pre');
+                    fallbackPre.textContent = 'Received an unexpected response structure.\n\n' + JSON.stringify(data, null, 2);
+                    jobDetailsContainer.appendChild(fallbackPre);
                 }
             })
             .catch(error => {
                 console.error('Fetch Error:', error);
-                jobDetailsContent.textContent = 'A client-side error occurred. See debug log for details.';
+                jobDetailsContainer.innerHTML = '<pre>A client-side error occurred. See debug log for details.</pre>';
                 const errorEntry = document.createElement('div');
                 errorEntry.textContent = `[FATAL] ${error.message}`;
                 errorEntry.className = 'log-error';
                 debugLogContent.appendChild(errorEntry);
             });
         });
+
+        function createCollapsibleSection(title, content) {
+            const details = document.createElement('details');
+            const summary = document.createElement('summary');
+            summary.textContent = title;
+            details.appendChild(summary);
+ 
+            // The content might be a string (for errors)
+            if (typeof content === 'string') {
+                const pre = document.createElement('pre');
+                pre.textContent = content;
+                details.appendChild(pre);
+                return details;
+            }
+ 
+            const table = document.createElement('table');
+ 
+            if (title === 'Settings' && typeof content === 'object' && !Array.isArray(content)) {
+                const tbody = document.createElement('tbody');
+                // Sort keys for consistent order
+                for (const [key, value] of Object.entries(content).sort()) {
+                    const row = tbody.insertRow();
+                    const keyCell = row.insertCell();
+                    keyCell.textContent = key;
+                    keyCell.className = 'settings-key';
+ 
+                    const valueCell = row.insertCell();
+                    valueCell.textContent = value;
+                    valueCell.className = 'settings-value';
+                }
+                table.appendChild(tbody);
+                details.appendChild(table);
+            } else if (title === 'autoinst-log' && Array.isArray(content)) {
+                const thead = document.createElement('thead');
+                const headerRow = thead.insertRow();
+                headerRow.insertCell().outerHTML = '<th>Timestamp</th>';
+                headerRow.insertCell().outerHTML = '<th>Message</th>';
+                table.appendChild(thead);
+ 
+                const tbody = document.createElement('tbody');
+                for (const logEntry of content) {
+                    const row = tbody.insertRow();
+                    row.insertCell().textContent = logEntry.timestamp;
+                    row.insertCell().textContent = logEntry.message;
+                }
+                table.appendChild(tbody);
+                details.appendChild(table);
+            } else {
+                // Fallback to <pre> for other content
+                const pre = document.createElement('pre');
+                pre.textContent = JSON.stringify(content, null, 2);
+                details.appendChild(pre);
+            }
+            return details;
+        }
     </script>
 </body>
 </html>
