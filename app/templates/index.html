@@ -21,8 +21,7 @@
         .settings-key { font-weight: bold; font-family: sans-serif; width: 25%; }
         .settings-value { font-family: monospace; white-space: pre-wrap; }
         .autoinst-log-table .col-timestamp,
-        .autoinst-log-table .col-mutex,
-        .autoinst-log-table .col-barrier {
+        .autoinst-log-table .col-type {
             width: 1%;
             white-space: nowrap;
         }
@@ -57,23 +56,6 @@
             border: 1px solid rgba(0, 123, 255, 0.5);
             pointer-events: none;
             z-index: 20;
-        }
-        .timeline-legend {
-            margin-top: 1em;
-            display: flex;
-            justify-content: center;
-            gap: 1em;
-            font-family: sans-serif;
-        }
-        .legend-item {
-            display: flex;
-            align-items: center;
-        }
-        .legend-color {
-            width: 15px;
-            height: 15px;
-            margin-right: 5px;
-            border: 1px solid #666;
         }
         .timeline-legend {
             margin-top: 1em;
@@ -173,7 +155,20 @@
 
                 // Handle timeline visualization
                 if (data.timeline_events && data.timeline_events.length > 0) {
-                    setupTimeline(data.timeline_events, data.jobs, 'timeline-container');
+                    // Define color palette in the frontend
+                    const COLOR_PALETTE = [
+                        '#007bff', '#28a745', '#fd7e14', '#6f42c1', '#dc3545', '#17a2b8',
+                        '#ffc107', '#6610f2', '#e83e8c', '#20c997', '#6c757d', '#343a40'
+                    ];
+
+                    // Dynamically create the color map from the types provided by the backend
+                    const typeColorMap = {};
+                    if (data.event_types) {
+                        data.event_types.forEach((type, i) => {
+                            typeColorMap[type] = COLOR_PALETTE[i % COLOR_PALETTE.length];
+                        });
+                    }
+                    setupTimeline(data.timeline_events, data.jobs, 'timeline-container', typeColorMap);
                 } else {
                     timelineContainer.innerHTML = '<p>No timeline events to display.</p>';
                 }
@@ -203,6 +198,13 @@
                             title.append(` - Error fetching details`);
                         } else {
                             title.append(` - ${jobDetails.short_name}`);
+                            if (jobDetails.parser_name) {
+                                const parserSpan = document.createElement('span');
+                                parserSpan.textContent = ` [Parser: ${jobDetails.parser_name}]`;
+                                parserSpan.style.color = '#888';
+                                parserSpan.style.fontStyle = 'italic';
+                                title.appendChild(parserSpan);
+                            }
                             if (jobDetails.is_cached) {
                                 const cachedSpan = document.createElement('span');
                                 cachedSpan.textContent = ' [Cached]';
@@ -250,7 +252,7 @@
                         }
 
                         if (autoinstLog) {
-                            const logSection = createCollapsibleSection('autoinst-log', autoinstLog, jobId);
+                            const logSection = createCollapsibleSection('autoinst-log', jobDetails, jobId);
                             logSection.id = `autoinst-log-${jobId}`;
                             jobDiv.appendChild(logSection);
                         }
@@ -279,7 +281,7 @@
             });
         });
 
-        function setupTimeline(allEvents, jobs, containerId) {
+        function setupTimeline(allEvents, jobs, containerId, typeColorMap) {
             const container = document.getElementById(containerId);
             const resetButton = document.getElementById('reset-zoom-btn');
 
@@ -290,7 +292,7 @@
             let currentEndTime = fullEndTime;
 
             function renderCurrentView() {
-                renderTimeline(allEvents, jobs, container, currentStartTime, currentEndTime);
+                renderTimeline(allEvents, jobs, container, currentStartTime, currentEndTime, typeColorMap);
             }
 
             resetButton.addEventListener('click', () => {
@@ -374,7 +376,7 @@
             renderCurrentView();
         }
 
-        function renderTimeline(allEvents, jobs, container, startTime, endTime) {
+        function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColorMap) {
             container.innerHTML = '';
 
             const getShortName = (jobId) => {
@@ -475,16 +477,7 @@
                 const shortName = getShortName(event.job_id);
                 const y = yScale(shortName);
                 
-                let color = '#007bff'; // Default: blue
-                if (event.message.toLowerCase().includes('mutex')) {
-                    color = '#28a745'; // Mutex: green
-                } else if (event.message.toLowerCase().includes('barrier')) {
-                    color = '#fd7e14'; // Barrier: orange
-                } else if (event.message.toLowerCase().includes('module')) {
-                    color = '#6f42c1'; // Module: purple
-                } else if (event.message.toLowerCase().includes('error')) {
-                    color = '#dc3545'; // Error: red
-                }
+                const color = (typeColorMap && typeColorMap[event.type]) || '#808080'; // Default to gray for unknown types
 
                 const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
                 circle.setAttribute('cx', x);
@@ -527,30 +520,24 @@
             // Add Legend
             const legendContainer = document.getElementById('timeline-legend');
             legendContainer.innerHTML = ''; // Clear previous legend
-            const legendData = [
-                { color: '#28a745', label: 'Mutex' },
-                { color: '#fd7e14', label: 'Barrier' },
-                { color: '#6f42c1', label: 'Module' },
-                { color: '#ffc107', label: 'Waiting' },
-                { color: '#dc3545', label: 'Error' },
-                { color: '#007bff', label: 'Other' }
-            ];
+            
+            if (typeColorMap) {
+                for (const type in typeColorMap) {
+                    const legendItem = document.createElement('div');
+                    legendItem.className = 'legend-item';
 
-            legendData.forEach(item => {
-                const legendItem = document.createElement('div');
-                legendItem.className = 'legend-item';
+                    const colorBox = document.createElement('div');
+                    colorBox.className = 'legend-color';
+                    colorBox.style.backgroundColor = typeColorMap[type];
 
-                const colorBox = document.createElement('div');
-                colorBox.className = 'legend-color';
-                colorBox.style.backgroundColor = item.color;
+                    const label = document.createElement('span');
+                    label.textContent = type.charAt(0).toUpperCase() + type.slice(1);
 
-                const label = document.createElement('span');
-                label.textContent = item.label;
-
-                legendItem.appendChild(colorBox);
-                legendItem.appendChild(label);
-                legendContainer.appendChild(legendItem);
-            });
+                    legendItem.appendChild(colorBox);
+                    legendItem.appendChild(label);
+                    legendContainer.appendChild(legendItem);
+                }
+            }
         }
 
         function cleanLogMessage(message) {
@@ -561,26 +548,26 @@
             return cleaned;
         }
 
-        function createCollapsibleSection(title, content, jobId) {
+        function createCollapsibleSection(title, data, jobId) {
             const details = document.createElement('details');
             const summary = document.createElement('summary');
             summary.textContent = title;
             details.appendChild(summary);
  
             // The content might be a string (for errors)
-            if (typeof content === 'string') {
+            if (typeof data === 'string') {
                 const pre = document.createElement('pre');
-                pre.textContent = content;
+                pre.textContent = data;
                 details.appendChild(pre);
                 return details;
             }
  
             const table = document.createElement('table');
  
-            if (title === 'Settings' && typeof content === 'object' && !Array.isArray(content)) {
+            if (title === 'Settings' && typeof data === 'object' && !Array.isArray(data)) {
                 const tbody = document.createElement('tbody');
                 // Sort keys for consistent order
-                for (const [key, value] of Object.entries(content).sort()) {
+                for (const [key, value] of Object.entries(data).sort()) {
                     const row = tbody.insertRow();
                     const keyCell = row.insertCell();
                     keyCell.textContent = key;
@@ -592,16 +579,35 @@
                 }
                 table.appendChild(tbody);
                 details.appendChild(table);
-            } else if (title === 'autoinst-log' && Array.isArray(content)) {
+            } else if (title === 'autoinst-log') {
+                const content = data['autoinst-log'];
+                const optionalColumns = data['optional_columns'] || [];
+
+                if (!Array.isArray(content)) {
+                    const pre = document.createElement('pre');
+                    pre.textContent = content;
+                    details.appendChild(pre);
+                    return details;
+                }
+
                 table.className = 'autoinst-log-table';
                 const thead = document.createElement('thead');
                 const headerRow = thead.insertRow();
-                const columns = [
+                let columns = [
                     { name: 'Timestamp', key: 'timestamp', class: 'col-timestamp' },
-                    { name: 'Mutex', key: 'mutex', class: 'col-mutex' },
-                    { name: 'Barrier', key: 'barrier', class: 'col-barrier' },
-                    { name: 'Message', key: 'message', class: 'col-message' }
+                    { name: 'Type', key: 'type', class: 'col-type' },
                 ];
+
+                optionalColumns.forEach(colKey => {
+                    const colName = colKey.charAt(0).toUpperCase() + colKey.slice(1).replace(/_/g, ' ');
+                    columns.push({
+                        name: colName,
+                        key: colKey,
+                        class: `col-${colKey}`
+                    });
+                });
+
+                columns.push({ name: 'Message', key: 'message', class: 'col-message' });
 
                 columns.forEach(col => {
                     const th = document.createElement('th');
@@ -632,7 +638,7 @@
             } else {
                 // Fallback to <pre> for other content
                 const pre = document.createElement('pre');
-                pre.textContent = JSON.stringify(content, null, 2);
+                pre.textContent = JSON.stringify(data, null, 2);
                 details.appendChild(pre);
             }
             return details;
