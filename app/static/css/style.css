@@ -48,8 +48,15 @@ th { background-color: #f2f2f2; font-weight: bold; }
     background-color: #fdfdfd;
 }
 .timeline-participant-label { font-weight: bold; }
-.timeline-event-marker { cursor: pointer; }
-.timeline-event-marker:hover { stroke: black; stroke-width: 2px; }
+.timeline-event-marker {
+    cursor: pointer;
+    transition: opacity 0.3s ease;
+}
+.timeline-event-marker:hover {
+    stroke: black;
+    stroke-width: 2px;
+}
+.timeline-event-marker.faded { opacity: 0.2; }
 .timeline-tooltip {
     position: absolute; background-color: #333; color: white;
     padding: 5px 10px; border-radius: 4px; pointer-events: none;
@@ -62,6 +69,11 @@ th { background-color: #f2f2f2; font-weight: bold; }
     border: 1px solid rgba(0, 123, 255, 0.5);
     pointer-events: none;
     z-index: 20;
+}
+.mutex-arrow {
+    stroke: #333;
+    stroke-width: 1.5;
+    opacity: 0.9;
 }
 .timeline-legend {
     margin-top: 1em;

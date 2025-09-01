@@ -64,7 +64,7 @@ document.getElementById('log-form').addEventListener('submit', function(event) {
                     typeColorMap[type] = COLOR_PALETTE[i % COLOR_PALETTE.length];
                 });
             }
-            setupTimeline(data.timeline_events, data.jobs, 'timeline-container', typeColorMap);
+            setupTimeline(data.timeline_events, data.jobs, 'timeline-container', typeColorMap, data.mutex_pairs);
         } else {
             timelineContainer.innerHTML = '<p>No timeline events to display.</p>';
         }
@@ -221,7 +221,7 @@ document.getElementById('job-details-container').addEventListener('click', funct
     }
 });
 
-function setupTimeline(allEvents, jobs, containerId, typeColorMap) {
+function setupTimeline(allEvents, jobs, containerId, typeColorMap, mutexPairs) {
     const container = document.getElementById(containerId);
     const resetButton = document.getElementById('reset-zoom-btn');
 
@@ -232,7 +232,7 @@ function setupTimeline(allEvents, jobs, containerId, typeColorMap) {
     let currentEndTime = fullEndTime;
 
     function renderCurrentView() {
-        renderTimeline(allEvents, jobs, container, currentStartTime, currentEndTime, typeColorMap);
+        renderTimeline(allEvents, jobs, container, currentStartTime, currentEndTime, typeColorMap, mutexPairs);
     }
 
     resetButton.addEventListener('click', () => {
@@ -316,7 +316,7 @@ function setupTimeline(allEvents, jobs, containerId, typeColorMap) {
     renderCurrentView();
 }
 
-function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColorMap) {
+function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColorMap, mutexPairs) {
     container.innerHTML = '';
 
     const getShortName = (jobId) => {
@@ -341,6 +341,15 @@ function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColo
     svg.setAttribute('width', width + margin.left + margin.right);
     svg.setAttribute('height', height);
     container.appendChild(svg);
+
+    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    defs.innerHTML = `
+        <marker id="arrowhead" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"></path>
+        </marker>
+    `;
+    svg.appendChild(defs);
 
     const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
     g.setAttribute('transform', `translate(${margin.left},${margin.top})`);
@@ -411,6 +420,11 @@ function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColo
     tooltip.className = 'timeline-tooltip';
     container.appendChild(tooltip);
 
+    // Create a layer for arrows, so we can easily hide/show them all
+    const arrowLayer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    arrowLayer.setAttribute('class', 'arrow-layer');
+    g.appendChild(arrowLayer);
+
     // Draw events
     events.forEach(event => {
         const x = xScale(event.timestamp);
@@ -425,19 +439,46 @@ function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColo
         circle.setAttribute('r', 5);
         circle.setAttribute('fill', color);
         circle.setAttribute('class', 'timeline-event-marker');
+        circle.id = `event-marker-${event.job_id}-${event.log_index}`;
+        circle.dataset.eventData = JSON.stringify(event);
         g.appendChild(circle);
 
         circle.addEventListener('mouseover', (e) => {
             tooltip.style.opacity = '1';
             tooltip.innerHTML = `<strong>${event.timestamp}</strong><br>${shortName}<br>${cleanLogMessage(event.message)}`;
+
+            // Hover-to-Trace logic
+            const eventData = JSON.parse(e.target.dataset.eventData);
+            if (eventData.mutex) {
+                const mutexName = eventData.mutex;
+
+                // Fade unrelated events
+                g.querySelectorAll('.timeline-event-marker').forEach(c => {
+                    const cData = JSON.parse(c.dataset.eventData);
+                    if (cData.mutex !== mutexName) {
+                        c.classList.add('faded');
+                    }
+                });
+
+                // Show the corresponding arrow
+                arrowLayer.querySelectorAll(`.mutex-arrow[data-mutex-name="${mutexName}"]`).forEach(arrow => {
+                    arrow.style.display = 'block';
+                });
+            }
         });
         circle.addEventListener('mousemove', (e) => {
             const rect = container.getBoundingClientRect();
             tooltip.style.left = `${e.clientX - rect.left + 15}px`;
             tooltip.style.top = `${e.clientY - rect.top + 15}px`;
         });
-        circle.addEventListener('mouseout', () => {
+        circle.addEventListener('mouseout', (e) => {
             tooltip.style.opacity = '0';
+
+            // Reset all fades and hide all arrows
+            g.querySelectorAll('.timeline-event-marker.faded').forEach(c => c.classList.remove('faded'));
+            arrowLayer.querySelectorAll('.mutex-arrow').forEach(a => {
+                a.style.display = 'none';
+            });
         });
 
         circle.addEventListener('click', () => {
@@ -460,6 +501,30 @@ function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColo
             }
         });
     });
+
+    // Draw mutex arrows (initially hidden)
+    if (mutexPairs && mutexPairs.length > 0) {
+        mutexPairs.forEach(pair => {
+            const startEventId = `event-marker-${pair.start_event.job_id}-${pair.start_event.log_index}`;
+            const endEventId = `event-marker-${pair.end_event.job_id}-${pair.end_event.log_index}`;
+
+            const startCircle = g.querySelector(`#${startEventId}`);
+            const endCircle = g.querySelector(`#${endEventId}`);
+
+            if (startCircle && endCircle) {
+                const arrow = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                arrow.setAttribute('x1', startCircle.getAttribute('cx'));
+                arrow.setAttribute('y1', startCircle.getAttribute('cy'));
+                arrow.setAttribute('x2', endCircle.getAttribute('cx'));
+                arrow.setAttribute('y2', endCircle.getAttribute('cy'));
+                arrow.setAttribute('class', 'mutex-arrow');
+                arrow.setAttribute('data-mutex-name', pair.mutex);
+                arrow.setAttribute('marker-end', 'url(#arrowhead)');
+                arrow.style.display = 'none'; // Hide by default
+                arrowLayer.appendChild(arrow);
+            }
+        });
+    }
 
     // Add Legend
     const legendContainer = document.getElementById('timeline-legend');
