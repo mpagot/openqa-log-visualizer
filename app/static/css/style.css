@@ -1,0 +1,113 @@
+body { font-family: sans-serif; margin: 2em; background-color: #fdfdfd; color: #333; }
+h1, h2 { color: #444; }
+form { margin-bottom: 2em; }
+input[type="url"] { width: 50%; padding: 8px; }
+button { padding: 8px 15px; }
+pre { background-color: #f4f4f4; padding: 1em; border: 1px solid #ddd; white-space: pre-wrap; word-wrap: break-word; border-radius: 4px; }
+#debug-frame { margin-top: 2em; }
+.log-error { color: #D8000C; font-weight: bold; }
+.log-debug { color: #666; }
+.log-info { color: #00529B; }
+.job-entry { margin-bottom: 2em; border: 1px solid #ccc; padding: 1em; border-radius: 4px; }
+table { border-collapse: collapse; width: 100%; margin-top: 0.5em; }
+th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; word-break: break-word; }
+th { background-color: #f2f2f2; font-weight: bold; }
+.settings-key { font-weight: bold; font-family: sans-serif; width: 25%; }
+.settings-value { font-family: monospace; white-space: pre-wrap; }
+
+/* Make all columns except 'Message' fit their content without wrapping */
+.autoinst-log-table th:not(.col-message),
+.autoinst-log-table td:not(.col-message) {
+    white-space: nowrap;
+}
+
+/* Make the 'Message' column a single line with ellipsis for overflow */
+.autoinst-log-table .col-message {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    /* This is a common trick to make ellipsis work reliably in table cells */
+    max-width: 1px;
+    width: 100%;
+}
+
+.highlighted-row {
+    background-color: #fff3cd !important;
+    transition: background-color 0.5s ease;
+}
+#timeline-frame h2 { display: inline-block; }
+#reset-zoom-btn { margin-left: 1em; display: none; }
+#timeline-container {
+    position: relative;
+    font-family: monospace;
+    font-size: 12px;
+}
+.timeline-svg {
+    width: 100%;
+    border: 1px solid #ccc;
+    background-color: #fdfdfd;
+}
+.timeline-participant-label { font-weight: bold; }
+.timeline-event-marker { cursor: pointer; }
+.timeline-event-marker:hover { stroke: black; stroke-width: 2px; }
+.timeline-tooltip {
+    position: absolute; background-color: #333; color: white;
+    padding: 5px 10px; border-radius: 4px; pointer-events: none;
+    opacity: 0; transition: opacity 0.2s; white-space: pre-wrap;
+    max-width: 500px; z-index: 10;
+}
+.timeline-selection {
+    position: absolute;
+    background-color: rgba(0, 123, 255, 0.2);
+    border: 1px solid rgba(0, 123, 255, 0.5);
+    pointer-events: none;
+    z-index: 20;
+}
+.timeline-legend {
+    margin-top: 1em;
+    display: flex;
+    justify-content: center;
+    gap: 1em;
+    font-family: sans-serif;
+}
+.legend-item {
+    display: flex;
+    align-items: center;
+}
+.legend-color {
+    width: 15px;
+    height: 15px;
+    margin-right: 5px;
+    border: 1px solid #666;
+}
+details {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 0.5em;
+    margin-top: 1em;
+    background-color: #f9f9f9;
+}
+summary {
+    font-weight: bold;
+    cursor: pointer;
+    padding: 0.2em;
+}
+#floating-controls {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    background-color: rgba(248, 249, 250, 0.9);
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 10px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+#floating-controls button {
+    display: block;
+    width: 100%;
+    margin-bottom: 5px;
+}
+#floating-controls button:last-child {
+    margin-bottom: 0;
+}
