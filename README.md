@@ -66,13 +66,10 @@ For detailed information on the structure of `config.yaml`, how to define parser
     Navigate to `http://127.0.0.1:5000` in your web browser.
 
 3.  **Analyze a Job:**
-    *   Paste the full URL of an openQA job into the input field.
-    *   Click the "Analyze" button.
-    *   The application will fetch the job, discover its relatives, and render the timeline and details.
+    Paste the full URL of an openQA job into the input field and click "Analyze". The application will fetch the job, discover its relatives, and render the timeline and details.
 
 4.  **Interact with the UI:**
-    *   **Timeline:** Click and drag to zoom into a specific time range. Click the "Reset Zoom" button to return to the full view. Hover over an event to see a tooltip with its details.
-    *   **Click-to-Highlight:** Click on any event circle in the timeline. The page will automatically scroll to the corresponding log entry in the "Job Details" section and highlight it.
+    For a detailed guide on how to use the web interface and interpret the results, please see the **Usage Guide**.
 
 ## Project Status
 
