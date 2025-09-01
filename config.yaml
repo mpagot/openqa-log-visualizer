@@ -1,0 +1,78 @@
+config_ver: 2
+autoinst_parser:
+  - name: SAPHanaSR
+    match_name: |-
+      .*SAPHanaSR-ScaleUp-PerfOpt.*
+    channels:
+      - name: "module_start"
+        type: "module"
+        pattern: |-
+          starting (?P<module>\S+) tests/\S+\.pm
+
+      - name: "module_finish"
+        type: "module"
+        pattern: |-
+          finished (?P<module>\S+) \S+ (runtime: \d+ s)
+  - name: multimachine
+    match_name: |-
+      .*(?P<name>support_?server|\d?nodes?_?\d+).*
+    channels:
+      - name: "error_mutex_lock_owner_finished"
+        type: "error"
+        pattern: |-
+          .*acquiring mutex '(?P<mutex>[^']+)': lock owner already finished
+
+      - name: "error_barrier_timeout"
+        type: "error"
+        pattern: |-
+          .*barrier '(?P<barrier>[^']+)': timeout
+
+      - name: "state_paused_on_lock"
+        type: "waiting"
+        pattern: |-
+          .*testapi::record_info.*title="Paused(?P<duration>[\s\dms]*)", output="Wait for.*
+
+      - name: "state_barrier_not_released"
+        type: "waiting"
+        pattern: |-
+          barrier '(?P<barrier>[^']+)'.*not released.*sleeping.*
+
+      - name: "mutex_lock_unavailable"
+        type: "waiting"
+        pattern: |-
+          mutex lock '(?P<mutex>[^']+)'.*unavailable.*sleeping.*
+          
+      - name: "mutex_create"
+        type: "mutex"
+        pattern: |-
+          mutex create '(?P<mutex>[^']+)'
+
+      - name: "mutex_lock"
+        type: "mutex"
+        pattern: |-
+          mutex lock '(?P<mutex>[^']+)'(?!.*unavailable)
+
+      - name: "mutex_unlock"
+        type: "mutex"
+        pattern: |-
+          mutex unlock '(?P<mutex>[^']+)'
+
+      - name: "barrier_create"
+        type: "barrier"
+        pattern: |-
+          barrier create '(?P<barrier>[^']+)'
+
+      - name: "barrier_wait"
+        type: "barrier"
+        pattern: |-
+          barrier wait '(?P<barrier>[^']+)'
+
+      - name: "module_start"
+        type: "module"
+        pattern: |-
+          starting (?P<module>\S+) tests/\S+\.pm
+
+      - name: "module_finish"
+        type: "module"
+        pattern: |-
+          finished (?P<module>\S+) \S+ (runtime: \d+ s)
