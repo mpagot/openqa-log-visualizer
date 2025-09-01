@@ -1,10 +1,12 @@
 [project]
-name = "openqa-multimachine-visual"
+name = "openqa-log-visualizer"
 version = "0.1.0"
-description = "Add your description here"
+description = "A web-based tool to analyze and visualize logs from multiple, related openQA jobs."
 readme = "README.md"
 
 dependencies = [
     "flask>=3.1.2",
     "openqa-client>=4.3.0",
+    "pyyaml",
+    "requests"
 ]

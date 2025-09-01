@@ -182,18 +182,22 @@ wheels = [
 ]
 
 [[package]]
-name = "openqa-multimachine-visual"
+name = "openqa-log-visualizer"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "flask" },
     { name = "openqa-client" },
+    { name = "pyyaml" },
+    { name = "requests" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "flask", specifier = ">=3.1.2" },
     { name = "openqa-client", specifier = ">=4.3.0" },
+    { name = "pyyaml" },
+    { name = "requests" },
 ]
 
 [[package]]
