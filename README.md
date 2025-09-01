@@ -53,11 +53,14 @@ For detailed information on the structure of `config.yaml`, how to define parser
 ## Usage
 
 1.  **Start the server:**
-    From the root of the project directory, run the application using `uv`:
+    From the root of the project directory, run the application using `uv` and the
+    Flask CLI.
     ```bash
-    uv run app/main.py
+    uv run flask --app app.main run --debug
     ```
-    The first time you run this command, `uv` will automatically create a virtual environment and install the required packages.
+    The first time you run this command, `uv` will automatically create a
+    virtual environment and install the required packages. The `--debug` flag
+    enables the reloader and debugger.
 
 2.  **Open the application:**
     Navigate to `http://127.0.0.1:5000` in your web browser.

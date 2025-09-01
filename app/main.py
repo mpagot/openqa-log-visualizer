@@ -3,106 +3,18 @@ from openqa_client.client import OpenQA_Client
 from openqa_client.exceptions import RequestError
 from urllib.parse import urlparse
 import requests
-import logging
 import re
 import time
-import sys
 import json
 import os
-import yaml
+from . import load_configuration
+from .autoinst_parser import parse_autoinst_log
 
 app = Flask(__name__)
 
-CACHE_DIR = "./.cache"
-
-# Load configuration from YAML file
-CONFIG_FILE = os.environ.get("CONFIG_FILE", "config.yaml")
-try:
-    with open(CONFIG_FILE, "r") as f:
-        config = yaml.safe_load(f)
-except (IOError, yaml.YAMLError) as e:
-    app.logger.error(f"Error loading configuration file {CONFIG_FILE}: {e}")
-    sys.exit(1)
-
-autoinst_log_parsers = config.get("autoinst_parser", [])
-
-# Pre-compile all regex patterns to catch errors early and improve performance.
-# The compiled regex objects are stored back into the config structure.
-for parser in autoinst_log_parsers:
-    match_name_str = parser.get("match_name")
-    if match_name_str:
-        try:
-            # Compile the regex and store it back
-            parser["match_name"] = re.compile(match_name_str)
-        except re.error as e:
-            app.logger.error(
-                f"Invalid 'match_name' regular expression in {CONFIG_FILE} for parser '{parser.get('name')}': {e}"
-            )
-            app.logger.error(f"Pattern: {match_name_str}")
-            sys.exit(1)
-
-    for channel in parser.get("channels", []):
-        pattern_str = channel.get("pattern")
-        if pattern_str:
-            try:
-                channel["pattern"] = re.compile(pattern_str)
-            except re.error as e:
-                app.logger.error(
-                    f"Invalid regular expression in {CONFIG_FILE} for parser '{parser.get('name')}' channel '{channel.get('name')}': {e}"
-                )
-                app.logger.error(f"Pattern: {pattern_str}")
-                sys.exit(1)
-timestamp_re = re.compile(r"^\[([^\]]+)\]")
-
-
-def parse_autoinst_log(log_content: str, patterns: list) -> tuple[list, list]:
-    """
-    Parses the content of an autoinst-log.txt file to extract only the lines
-    containing specific keywords. It also extracts any named groups from the regex.
-
-    Args:
-        log_content: The full string content of the log file.
-        patterns: A list of channel objects from the config file,
-                  with pre-compiled regex patterns.
-
-    Returns:
-        A tuple containing:
-        - A list of dictionaries, where each dictionary represents a relevant
-          log line and contains its timestamp, message, type, and any other
-          named groups from the regex.
-        - A sorted list of unique optional column names found in the logs.
-    """
-    parsed_log = []
-    optional_columns = set()
-
-    for line in log_content.splitlines():
-        for channel in patterns:
-            # The pattern is pre-compiled at startup
-            pattern = channel.get("pattern")
-            if not pattern:
-                continue
-
-            search_match = pattern.search(line)
-            if search_match:
-                timestamp_match = timestamp_re.match(line)
-                if timestamp_match:
-                    timestamp = timestamp_match.group(1)
-                    message = line[len(timestamp_match.group(0)) :].strip()
-                else:
-                    timestamp = "unknown"
-                    message = line.strip()
-
-                log_entry = {
-                    "timestamp": timestamp,
-                    "message": message,
-                    "type": channel["type"],
-                }
-                group_dict = search_match.groupdict()
-                log_entry.update(group_dict)
-                optional_columns.update(group_dict.keys())
-                parsed_log.append(log_entry)
-                break  # Found a match, go to the next line
-    return parsed_log, sorted(list(optional_columns))
+CACHE_DIR, autoinst_log_parsers, timestamp_re, perl_exception_re = load_configuration(
+    app.logger
+)
 
 
 def format_job_name(full_name: str) -> str:
@@ -142,12 +54,16 @@ def create_timeline_events(all_job_details: dict) -> list:
             log_data = details["autoinst-log"]
             if isinstance(log_data, list):
                 for index, log_entry in enumerate(log_data):
+                    # Events without a timestamp (like exceptions) cannot be plotted.
+                    if log_entry.get("timestamp") is None:
+                        continue
                     event_data = log_entry.copy()
                     event_data["job_id"] = job_id_key
                     event_data["log_index"] = index
                     timeline_events.append(event_data)
 
     if timeline_events:
+        # This sort will now work safely as all items have a timestamp.
         timeline_events.sort(key=lambda x: x["timestamp"])
     return timeline_events
 
@@ -348,7 +264,10 @@ def analyze():
                     if parser_to_use:
                         log_parsing_start = time.perf_counter()
                         parsed_log, optional_columns = parse_autoinst_log(
-                            log_content, parser_to_use["channels"]
+                            log_content,
+                            parser_to_use["channels"],
+                            timestamp_re,
+                            perl_exception_re,
                         )
                         job_details["autoinst-log"] = parsed_log
                         job_details["optional_columns"] = optional_columns
@@ -389,6 +308,7 @@ def analyze():
                 type_name = channel.get("type")
                 if type_name:
                     all_types.add(type_name)
+        all_types.add("exception")
 
         response_data = {
             "jobs": all_job_details,
