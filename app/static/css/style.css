@@ -71,9 +71,13 @@ th { background-color: #f2f2f2; font-weight: bold; }
     z-index: 20;
 }
 .event-arrow {
-    stroke: #333;
     stroke-width: 1.5;
     opacity: 0.9;
+}
+.critical-section-rect {
+    fill: #dc3545; /* A reddish color, same as 'error' type */
+    opacity: 0.15;
+    transition: opacity 0.3s ease;
 }
 .timeline-legend {
     margin-top: 1em;

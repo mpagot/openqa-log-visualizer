@@ -495,11 +495,26 @@ function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColo
                     }
                 });
 
-                // Show the corresponding arrow
-                const selector = `.event-arrow[data-pair-name="${pairName}"]`;
-                arrowLayer.querySelectorAll(selector).forEach(arrow => {
+                // --- DEBUG LOGS for hover interaction ---
+                console.group(`Hover Trace for: ${pairName}`);
+                const arrowSelector = `.event-arrow[data-pair-name="${pairName}"]`;
+                const arrows = arrowLayer.querySelectorAll(arrowSelector);
+                console.log(`Found ${arrows.length} arrows to show.`);
+                arrows.forEach(arrow => {
                     arrow.style.display = 'block';
                 });
+
+                const rectSelector = `.critical-section-rect[data-pair-name="${pairName}"]`;
+                const rects = g.querySelectorAll(rectSelector);
+                console.log(`Found ${rects.length} critical section rectangles to highlight.`);
+                rects.forEach(rect => rect.style.opacity = 0.4);
+                console.groupEnd();
+
+                // Show the sync legend
+                const syncLegend = document.getElementById('sync-legend');
+                if (syncLegend) {
+                    syncLegend.style.display = 'flex';
+                }
             }
         });
         circle.addEventListener('mousemove', (e) => {
@@ -508,13 +523,25 @@ function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColo
             tooltip.style.top = `${e.clientY - rect.top + 15}px`;
         });
         circle.addEventListener('mouseout', (e) => {
-            tooltip.style.opacity = '0';
+            // If the mouse is moving to a critical section rectangle, don't hide the tooltip,
+            // let the rectangle's mouseover event handle it. Otherwise, hide it.
+            if (!e.relatedTarget || !e.relatedTarget.classList.contains('critical-section-rect')) {
+                tooltip.style.opacity = '0';
+            }
 
             // Reset all fades and hide all arrows
             g.querySelectorAll('.timeline-event-marker.faded').forEach(c => c.classList.remove('faded'));
             arrowLayer.querySelectorAll('.event-arrow').forEach(a => {
                 a.style.display = 'none';
             });
+            g.querySelectorAll('.critical-section-rect').forEach(r => {
+                r.style.opacity = 0.15; // Reset to default opacity
+            });
+
+            const syncLegend = document.getElementById('sync-legend');
+            if (syncLegend) {
+                syncLegend.style.display = 'none';
+            }
         });
 
         circle.addEventListener('click', () => {
@@ -540,41 +567,86 @@ function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColo
 
     // Draw mutex arrows (initially hidden)
     if (Array.isArray(eventPairs) && eventPairs.length > 0) {
-        console.groupCollapsed('Arrow Rendering');
-        console.log(`Attempting to render ${eventPairs.length} event pairs.`);
+        console.groupCollapsed('Synchronization Rendering'); // Keep this group for debugging
+        console.log(`Processing ${eventPairs.length} event pairs.`);
         eventPairs.forEach((pair, index) => {
             const startEvent = pair.start_event;
             const endEvent = pair.end_event;
 
-            // Calculate positions directly from the data, without relying on finding circles.
-            // This ensures arrows can be drawn even if their endpoints are off-screen.
             const x1 = xScale(startEvent.timestamp);
             const y1 = yScale(getShortName(startEvent.job_id));
             const x2 = xScale(endEvent.timestamp);
             const y2 = yScale(getShortName(endEvent.job_id));
 
-            // Only draw the arrow if both participants (lifelines) are valid in the current view.
             if (!isNaN(y1) && !isNaN(y2)) {
-                const arrow = document.createElementNS("http://www.w3.org/2000/svg", "line");
-                arrow.setAttribute('x1', x1);
-                arrow.setAttribute('y1', y1);
-                arrow.setAttribute('x2', x2);
-                arrow.setAttribute('y2', y2);
-                arrow.setAttribute('class', 'event-arrow');
-                arrow.setAttribute('data-pair-name', pair.mutex || pair.barrier);
-                arrow.setAttribute('marker-end', 'url(#arrowhead)');
-                arrow.style.display = 'none'; // Hide by default
-                arrowLayer.appendChild(arrow);
+                if (pair.pair_type === 'mutex_lock_unlock') {
+                    const addTooltipHandlersToRect = (element, mutexName) => {
+                        element.addEventListener('mouseover', (e) => {
+                            tooltip.style.opacity = '1';
+                            tooltip.innerHTML = `Critical Section: <strong>${mutexName}</strong>`;
+                        });
+                        element.addEventListener('mousemove', (e) => {
+                            const rect = container.getBoundingClientRect();
+                            tooltip.style.left = `${e.clientX - rect.left + 15}px`;
+                            tooltip.style.top = `${e.clientY - rect.top + 15}px`;
+                        });
+                        element.addEventListener('mouseout', (e) => {
+                            tooltip.style.opacity = '0';
+                        });
+                    };
+
+                    // For lock/unlock, always draw rectangles to show the duration of the lock.
+                    const rect1 = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                    rect1.setAttribute('x', x1);
+                    rect1.setAttribute('y', y1 - 10);
+                    rect1.setAttribute('width', x2 - x1);
+                    rect1.setAttribute('height', 20);
+                    rect1.setAttribute('class', 'critical-section-rect');
+                    rect1.setAttribute('data-pair-name', pair.mutex);
+                    g.insertBefore(rect1, arrowLayer);
+                    addTooltipHandlersToRect(rect1, pair.mutex);
+
+                    if (startEvent.job_id !== endEvent.job_id) {
+                        // If it's a cross-job lock, draw a second rectangle on the other lifeline.
+                        const rect2 = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                        rect2.setAttribute('x', x1);
+                        rect2.setAttribute('y', y2 - 10);
+                        rect2.setAttribute('width', x2 - x1);
+                        rect2.setAttribute('height', 20);
+                        rect2.setAttribute('class', 'critical-section-rect');
+                        rect2.setAttribute('data-pair-name', pair.mutex);
+                        g.insertBefore(rect2, arrowLayer);
+                        addTooltipHandlersToRect(rect2, pair.mutex);
+                    }
+                } else {
+                    // Draw an arrow for all other synchronization types (create/unlock, barrier/wait)
+                    const arrow = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    arrow.setAttribute('x1', x1);
+                    arrow.setAttribute('y1', y1);
+                    arrow.setAttribute('x2', x2);
+                    arrow.setAttribute('y2', y2);
+
+                    const eventType = pair.mutex ? 'mutex' : 'barrier';
+                    const color = typeColorMap[eventType] || '#333';
+                    arrow.setAttribute('stroke', color);
+
+                    arrow.setAttribute('class', 'event-arrow');
+                    arrow.setAttribute('data-pair-name', pair.mutex || pair.barrier);
+                    arrow.setAttribute('marker-end', 'url(#arrowhead)');
+                    arrow.style.display = 'none'; // Hide by default
+                    arrowLayer.appendChild(arrow);
+                }
             } else {
                 // This can happen if a job has no events within the current timeline view,
                 // so its lifeline (and thus its y-coordinate) doesn't exist.
-                console.warn(`Skipping arrow for pair #${index} because one or both lifelines are not in the current view.`, pair);
+                console.warn(`Skipping pair #${index} because one or both lifelines are not in the current view.`, pair);
             }
         });
         console.groupEnd();
     }
 
     // Add Legend
+    renderSynchronizationLegend(eventPairs, typeColorMap);
     const legendContainer = document.getElementById('timeline-legend');
     legendContainer.innerHTML = ''; // Clear previous legend
     
@@ -594,6 +666,53 @@ function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColo
             legendItem.appendChild(label);
             legendContainer.appendChild(legendItem);
         }
+    }
+}
+
+function renderSynchronizationLegend(eventPairs, typeColorMap) {
+    const legendContainer = document.getElementById('sync-legend');
+    if (!legendContainer) return;
+    legendContainer.innerHTML = ''; // Clear previous legend
+ 
+    const hasMutexSignal = eventPairs.some(p => p.pair_type === 'mutex_create_unlock');
+    const hasBarrierSignal = eventPairs.some(p => p.pair_type === 'barrier_create_wait');
+    const hasLock = eventPairs.some(p => p.pair_type === 'mutex_lock_unlock');
+ 
+    const legendItems = [];
+ 
+    if (hasMutexSignal) {
+        const color = typeColorMap['mutex'] || '#333';
+        legendItems.push({
+            symbol: `<svg width="30" height="10"><line x1="0" y1="5" x2="30" y2="5" class="event-arrow" style="stroke: ${color}; stroke-width: 1.5;" marker-end="url(#arrowhead)"></line></svg>`,
+            label: 'Mutex Signal'
+        });
+    }
+
+    if (hasBarrierSignal) {
+        const color = typeColorMap['barrier'] || '#333';
+        legendItems.push({
+            symbol: `<svg width="30" height="10"><line x1="0" y1="5" x2="30" y2="5" class="event-arrow" style="stroke: ${color}; stroke-width: 1.5;" marker-end="url(#arrowhead)"></line></svg>`,
+            label: 'Barrier Signal'
+        });
+    }
+ 
+    if (hasLock) {
+        legendItems.push({
+            symbol: '<svg width="30" height="10"><rect x="0" y="0" width="30" height="10" class="critical-section-rect" style="opacity: 0.4;"></rect></svg>',
+            label: 'Critical Section'
+        });
+    }
+ 
+    if (legendItems.length > 0) {
+        legendItems.forEach(item => {
+            const legendItem = document.createElement('div');
+            legendItem.className = 'legend-item';
+            legendItem.innerHTML = `
+                <div class="legend-symbol">${item.symbol}</div>
+                <span>${item.label}</span>
+            `;
+            legendContainer.appendChild(legendItem);
+        });
     }
 }
 
