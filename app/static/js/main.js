@@ -37,6 +37,28 @@ document.getElementById('log-form').addEventListener('submit', function(event) {
     })
     .then(response => response.json())
     .then(data => {
+        // --- DEBUG LOGS for data structure validation ---
+        console.group('Backend Data Analysis');
+
+        if (data.error) {
+            console.error('Backend returned an error:', data.error);
+        }
+
+        if (!data.jobs) {
+            console.warn('Data object is missing the "jobs" property.');
+        }
+
+        if (!data.timeline_events || data.timeline_events.length === 0) {
+            console.warn('Data object has no "timeline_events".');
+        }
+
+        if (!data.event_pairs) {
+            console.warn('Data object is missing "event_pairs" for arrows.');
+        } else {
+            console.log(`Received ${data.event_pairs.length} event pairs.`);
+        }
+        console.groupEnd();
+        // --- END DEBUG LOGS ---
         jobDetailsContainer.innerHTML = ''; // Clear 'Analyzing...' message
 
         // Handle debug log first, as it should be present in both success and error responses
@@ -64,7 +86,7 @@ document.getElementById('log-form').addEventListener('submit', function(event) {
                     typeColorMap[type] = COLOR_PALETTE[i % COLOR_PALETTE.length];
                 });
             }
-            setupTimeline(data.timeline_events, data.jobs, 'timeline-container', typeColorMap, data.mutex_pairs);
+            setupTimeline(data.timeline_events, data.jobs, 'timeline-container', typeColorMap, data.event_pairs);
         } else {
             timelineContainer.innerHTML = '<p>No timeline events to display.</p>';
         }
@@ -189,7 +211,7 @@ document.getElementById('log-form').addEventListener('submit', function(event) {
         console.error('Fetch Error:', error);
         jobDetailsContainer.innerHTML = '<pre>A client-side error occurred. See debug log for details.</pre>';
         const errorEntry = document.createElement('div');
-        errorEntry.textContent = `[FATAL] ${error.message}`;
+        errorEntry.textContent = `[FATAL] ${error.message}. Is the server running?`;
         errorEntry.className = 'log-error';
         debugLogContent.appendChild(errorEntry);
     });
@@ -221,7 +243,7 @@ document.getElementById('job-details-container').addEventListener('click', funct
     }
 });
 
-function setupTimeline(allEvents, jobs, containerId, typeColorMap, mutexPairs) {
+function setupTimeline(allEvents, jobs, containerId, typeColorMap, eventPairs) {
     const container = document.getElementById(containerId);
     const resetButton = document.getElementById('reset-zoom-btn');
 
@@ -232,7 +254,7 @@ function setupTimeline(allEvents, jobs, containerId, typeColorMap, mutexPairs) {
     let currentEndTime = fullEndTime;
 
     function renderCurrentView() {
-        renderTimeline(allEvents, jobs, container, currentStartTime, currentEndTime, typeColorMap, mutexPairs);
+        renderTimeline(allEvents, jobs, container, currentStartTime, currentEndTime, typeColorMap, eventPairs);
     }
 
     resetButton.addEventListener('click', () => {
@@ -242,54 +264,64 @@ function setupTimeline(allEvents, jobs, containerId, typeColorMap, mutexPairs) {
         resetButton.style.display = 'none';
     });
 
+    // --- Robust Drag-to-Zoom Implementation ---
     let selectionRect = null;
     let startX = 0;
     let isDragging = false;
 
-    container.addEventListener('mousedown', (e) => {
+    function onMouseDown(e) {
         const svg = container.querySelector('.timeline-svg');
         if (!svg || e.target.tagName.toLowerCase() !== 'svg') return;
 
         const gRect = svg.querySelector('g').getBoundingClientRect();
         if (e.clientX < gRect.left || e.clientX > gRect.right) {
-            return;
+             return;
         }
 
         isDragging = true;
         const svgRect = svg.getBoundingClientRect();
         startX = e.clientX - svgRect.left;
 
-        selectionRect = document.createElement('div');
-        selectionRect.className = 'timeline-selection';
-        selectionRect.style.left = `${startX}px`;
-        selectionRect.style.top = `${gRect.top - svgRect.top}px`;
-        selectionRect.style.height = `${gRect.height}px`;
-        selectionRect.style.width = '0px';
-        container.appendChild(selectionRect);
+         selectionRect = document.createElement('div');
+         selectionRect.className = 'timeline-selection';
+         selectionRect.style.left = `${startX}px`;
+         selectionRect.style.top = `${gRect.top - svgRect.top}px`;
+         selectionRect.style.height = `${gRect.height}px`;
+         selectionRect.style.width = '0px';
+         container.appendChild(selectionRect);
         e.preventDefault();
-    });
 
-    container.addEventListener('mousemove', (e) => {
+        // Attach move and up listeners to the document to capture events globally
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    }
+
+    function onMouseMove(e) {
         if (!isDragging || !selectionRect) return;
         const svg = container.querySelector('.timeline-svg');
         const svgRect = svg.getBoundingClientRect();
         const currentX = e.clientX - svgRect.left;
         selectionRect.style.width = `${Math.abs(currentX - startX)}px`;
         selectionRect.style.left = `${Math.min(currentX, startX)}px`;
-    });
+    }
 
-    container.addEventListener('mouseup', (e) => {
+    function onMouseUp(e) {
         if (!isDragging) return;
         isDragging = false;
 
-        const svg = container.querySelector('.timeline-svg');
-        const svgRect = svg.getBoundingClientRect();
-        const endX = e.clientX - svgRect.left;
+        // Clean up global listeners
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
 
         if (selectionRect) {
             container.removeChild(selectionRect);
             selectionRect = null;
         }
+
+        const svg = container.querySelector('.timeline-svg');
+        if (!svg) return;
+        const svgRect = svg.getBoundingClientRect();
+        const endX = e.clientX - svgRect.left;
 
         if (Math.abs(endX - startX) < 10) return;
 
@@ -311,12 +343,13 @@ function setupTimeline(allEvents, jobs, containerId, typeColorMap, mutexPairs) {
 
         renderCurrentView();
         resetButton.style.display = 'inline-block';
-    });
+    }
 
+    container.addEventListener('mousedown', onMouseDown);
     renderCurrentView();
 }
 
-function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColorMap, mutexPairs) {
+function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColorMap, eventPairs) {
     container.innerHTML = '';
 
     const getShortName = (jobId) => {
@@ -449,19 +482,22 @@ function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColo
 
             // Hover-to-Trace logic
             const eventData = JSON.parse(e.target.dataset.eventData);
-            if (eventData.mutex) {
-                const mutexName = eventData.mutex;
+            const pairName = eventData.mutex || eventData.barrier;
+
+            if (pairName) {
 
                 // Fade unrelated events
                 g.querySelectorAll('.timeline-event-marker').forEach(c => {
                     const cData = JSON.parse(c.dataset.eventData);
-                    if (cData.mutex !== mutexName) {
+                    const cPairName = cData.mutex || cData.barrier;
+                    if (cPairName !== pairName) {
                         c.classList.add('faded');
                     }
                 });
 
                 // Show the corresponding arrow
-                arrowLayer.querySelectorAll(`.mutex-arrow[data-mutex-name="${mutexName}"]`).forEach(arrow => {
+                const selector = `.event-arrow[data-pair-name="${pairName}"]`;
+                arrowLayer.querySelectorAll(selector).forEach(arrow => {
                     arrow.style.display = 'block';
                 });
             }
@@ -476,7 +512,7 @@ function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColo
 
             // Reset all fades and hide all arrows
             g.querySelectorAll('.timeline-event-marker.faded').forEach(c => c.classList.remove('faded'));
-            arrowLayer.querySelectorAll('.mutex-arrow').forEach(a => {
+            arrowLayer.querySelectorAll('.event-arrow').forEach(a => {
                 a.style.display = 'none';
             });
         });
@@ -503,27 +539,39 @@ function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColo
     });
 
     // Draw mutex arrows (initially hidden)
-    if (mutexPairs && mutexPairs.length > 0) {
-        mutexPairs.forEach(pair => {
-            const startEventId = `event-marker-${pair.start_event.job_id}-${pair.start_event.log_index}`;
-            const endEventId = `event-marker-${pair.end_event.job_id}-${pair.end_event.log_index}`;
+    if (Array.isArray(eventPairs) && eventPairs.length > 0) {
+        console.groupCollapsed('Arrow Rendering');
+        console.log(`Attempting to render ${eventPairs.length} event pairs.`);
+        eventPairs.forEach((pair, index) => {
+            const startEvent = pair.start_event;
+            const endEvent = pair.end_event;
 
-            const startCircle = g.querySelector(`#${startEventId}`);
-            const endCircle = g.querySelector(`#${endEventId}`);
+            // Calculate positions directly from the data, without relying on finding circles.
+            // This ensures arrows can be drawn even if their endpoints are off-screen.
+            const x1 = xScale(startEvent.timestamp);
+            const y1 = yScale(getShortName(startEvent.job_id));
+            const x2 = xScale(endEvent.timestamp);
+            const y2 = yScale(getShortName(endEvent.job_id));
 
-            if (startCircle && endCircle) {
+            // Only draw the arrow if both participants (lifelines) are valid in the current view.
+            if (!isNaN(y1) && !isNaN(y2)) {
                 const arrow = document.createElementNS("http://www.w3.org/2000/svg", "line");
-                arrow.setAttribute('x1', startCircle.getAttribute('cx'));
-                arrow.setAttribute('y1', startCircle.getAttribute('cy'));
-                arrow.setAttribute('x2', endCircle.getAttribute('cx'));
-                arrow.setAttribute('y2', endCircle.getAttribute('cy'));
-                arrow.setAttribute('class', 'mutex-arrow');
-                arrow.setAttribute('data-mutex-name', pair.mutex);
+                arrow.setAttribute('x1', x1);
+                arrow.setAttribute('y1', y1);
+                arrow.setAttribute('x2', x2);
+                arrow.setAttribute('y2', y2);
+                arrow.setAttribute('class', 'event-arrow');
+                arrow.setAttribute('data-pair-name', pair.mutex || pair.barrier);
                 arrow.setAttribute('marker-end', 'url(#arrowhead)');
                 arrow.style.display = 'none'; // Hide by default
                 arrowLayer.appendChild(arrow);
+            } else {
+                // This can happen if a job has no events within the current timeline view,
+                // so its lifeline (and thus its y-coordinate) doesn't exist.
+                console.warn(`Skipping arrow for pair #${index} because one or both lifelines are not in the current view.`, pair);
             }
         });
+        console.groupEnd();
     }
 
     // Add Legend

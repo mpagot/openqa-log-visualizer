@@ -6,9 +6,7 @@ import logging
 from typing import Tuple, List, Dict, Any, Pattern
 
 
-def load_configuration(
-    app_logger: logging.Logger,
-) -> Tuple[str, List[Dict[str, Any]], Pattern, Pattern]:
+def load_configuration(app_logger: logging.Logger) -> tuple:
     """
     Loads configuration from YAML file, pre-compiles regexes, and returns
     key configuration variables.
@@ -22,6 +20,7 @@ def load_configuration(
         - autoinst_log_parsers: The list of parser configurations with compiled regexes.
         - timestamp_re: Compiled regex for parsing timestamps.
         - perl_exception_re: Compiled regex for parsing Perl exceptions.
+        - max_jobs_to_explore: The maximum number of related jobs to discover.
     """
     CACHE_DIR = "./.cache"
 
@@ -35,6 +34,7 @@ def load_configuration(
         sys.exit(1)
 
     autoinst_log_parsers = config.get("autoinst_parser", [])
+    max_jobs_to_explore = config.get("max_jobs_to_explore", 10)
 
     # Pre-compile all regex patterns to catch errors early and improve performance.
     for parser in autoinst_log_parsers:
@@ -80,4 +80,10 @@ def load_configuration(
     timestamp_re = re.compile(r"^\[([^\]]+)\]")
     perl_exception_re = re.compile(r" at .*?\.pm line \d+")
 
-    return CACHE_DIR, autoinst_log_parsers, timestamp_re, perl_exception_re
+    return (
+        CACHE_DIR,
+        autoinst_log_parsers,
+        timestamp_re,
+        perl_exception_re,
+        max_jobs_to_explore,
+    )

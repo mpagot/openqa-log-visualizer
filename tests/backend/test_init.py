@@ -10,6 +10,7 @@ def test_load_configuration_success(tmp_path, app_logger, monkeypatch):
             {
                 "name": "test_parser",
                 "match_name": ".*(?P<name>test).*",
+                "max_jobs_to_explore": 20,
                 "channels": [{"name": "test_channel", "pattern": ".*hello.*", "type": "test"}],
             }
         ]
@@ -19,7 +20,7 @@ def test_load_configuration_success(tmp_path, app_logger, monkeypatch):
         yaml.dump(config_content, f)
 
     monkeypatch.setenv("CONFIG_FILE", str(config_file))
-    _, parsers, _, _ = load_configuration(app_logger)
+    _, parsers, _, _, max_jobs = load_configuration(app_logger)
 
     assert len(parsers) == 1
     assert parsers[0]["name"] == "test_parser"
@@ -27,6 +28,7 @@ def test_load_configuration_success(tmp_path, app_logger, monkeypatch):
     assert hasattr(parsers[0]["match_name"], "search")
     assert hasattr(parsers[0]["channels"][0]["pattern"], "search")
 
+    assert max_jobs == 20
 
 def test_load_configuration_invalid_regex(tmp_path, app_logger, monkeypatch):
     """Tests that the application exits if an invalid regex is in the config."""
@@ -146,7 +148,7 @@ def test_load_configuration_from_env_variable(tmp_path, app_logger, monkeypatch)
     monkeypatch.setenv("CONFIG_FILE", str(custom_config_file))
 
     # Load configuration and assert that the custom one was loaded.
-    _, parsers, _, _ = load_configuration(app_logger)
+    _, parsers, _, _, _ = load_configuration(app_logger)
 
     assert len(parsers) == 1
     assert parsers[0]["name"] == "custom_parser"

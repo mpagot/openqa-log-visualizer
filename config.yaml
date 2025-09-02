@@ -1,4 +1,5 @@
-config_ver: 2
+config_ver: 1
+max_jobs_to_explore: 10
 autoinst_parser:
   - name: SAPHanaSR
     match_name: |-
