@@ -12,3 +12,8 @@ dependencies = [
     "pyyaml",
     "requests",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+]

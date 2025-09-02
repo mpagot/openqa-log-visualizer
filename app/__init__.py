@@ -38,28 +38,44 @@ def load_configuration(
 
     # Pre-compile all regex patterns to catch errors early and improve performance.
     for parser in autoinst_log_parsers:
-        match_name_str = parser.get("match_name")
-        if match_name_str:
-            try:
-                parser["match_name"] = re.compile(match_name_str)
-            except re.error as e:
-                app_logger.error(
-                    f"Invalid 'match_name' regular expression in {CONFIG_FILE} for parser '{parser.get('name')}': {e}"
-                )
-                app_logger.error(f"Pattern: {match_name_str}")
+        parser_def = dict()
+        for k in ["name", "match_name"]:
+            parser_def[k] = parser.get(k)
+            if not parser_def[k]:
+                app_logger.error(f"Invalid configuration in {CONFIG_FILE}: parser '{parser}' is missing its '{k}' field.")
                 sys.exit(1)
 
-        for channel in parser.get("channels", []):
-            pattern_str = channel.get("pattern")
-            if pattern_str:
-                try:
-                    channel["pattern"] = re.compile(pattern_str)
-                except re.error as e:
-                    app_logger.error(
-                        f"Invalid regular expression in {CONFIG_FILE} for parser '{parser.get('name')}' channel '{channel.get('name')}': {e}"
+
+        try:
+            parser["match_name"] = re.compile(parser_def["match_name"])
+            if "name" not in parser["match_name"].groupindex:
+                app_logger.error(
+                        f"Invalid 'match_name' regular expression '{parser_def["match_name"]}' in {CONFIG_FILE} for parser '{parser_def["name"]}': "
+                        "missing named group '(?P<name>...)'. This is required for short job name display."
                     )
-                    app_logger.error(f"Pattern: {pattern_str}")
+                sys.exit(1)
+
+        except re.error as e:
+            app_logger.error(
+                    f"Invalid 'match_name' regular expression '{parser_def["match_name"]}' in {CONFIG_FILE} for parser '{parser_def["name"]}': {e}"
+                )
+            sys.exit(1)
+
+        for channel in parser.get("channels", []):
+            channel_def = dict()
+            for k in ["name", "pattern"]:
+                channel_def[k] = channel.get(k)
+                if not channel_def[k]:
+                    app_logger.error(f"Invalid configuration in {CONFIG_FILE}: channel '{channel}' is missing its '{k}' field.")
                     sys.exit(1)
+            try:
+                channel["pattern"] = re.compile(channel_def["pattern"])
+            except re.error as e:
+                app_logger.error(
+                    f"Invalid regular expression '{channel_def["pattern"]}' in {CONFIG_FILE} for parser '{parser_def['name']}' channel '{channel_def['name']}': {e}"
+                )
+
+                sys.exit(1)
 
     timestamp_re = re.compile(r"^\[([^\]]+)\]")
     perl_exception_re = re.compile(r" at .*?\.pm line \d+")

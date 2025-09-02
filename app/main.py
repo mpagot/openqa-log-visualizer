@@ -1,6 +1,4 @@
 from flask import Flask, jsonify, render_template, request
-from openqa_client.client import OpenQA_Client
-from openqa_client.exceptions import RequestError
 from urllib.parse import urlparse
 import requests
 import re
@@ -9,6 +7,13 @@ import json
 import os
 from . import load_configuration
 from .autoinst_parser import parse_autoinst_log
+from .client import (
+    OpenQAClientWrapper,
+    OpenQAClientError,
+    OpenQAClientAPIError,
+    OpenQAClientLogDownloadError,
+)
+
 
 app = Flask(__name__)
 
@@ -21,6 +26,17 @@ def format_job_name(full_name: str) -> str:
     """
     Parses the full job name to extract a more concise name using the 'match_name'
     regex from the configuration.
+    Function is designed to take a full job name (e.g., arch:x86_64:support_server)
+    and extract a shorter, more readable name (e.g., support_server)
+    based on a regular expression defined in the config.yaml file.
+    The key is that the regex must contain a named group (?P<name>...)
+    to specify which part of the string to extract.
+
+    Args:
+        full_name: The full job name to be parsed.
+
+    Returns:
+        name
     """
     if not full_name:
         return "Unknown Name"
@@ -35,7 +51,56 @@ def format_job_name(full_name: str) -> str:
                 if short_name:
                     return short_name
 
+    app.logger.warning(
+        f"No parser name in the configuration file matches '{full_name}'"
+    )
     return full_name
+
+
+def find_mutex_pairs(timeline_events: list) -> tuple[list, int]:
+    """
+    Finds pairs of 'mutex_create' and 'mutex_unlock' events for the same mutex name.
+
+    This function uses a stack-based approach to handle potentially nested locks,
+    pairing a 'mutex_unlock' with the most recently seen 'mutex_create' for the
+    same mutex name.
+
+    Args:
+        timeline_events: A list of all timeline event dictionaries.
+
+    Returns:
+        A list of dictionaries, each representing a create/unlock pair.
+        An integer count of the number of mutex-related events processed.
+    """
+    mutex_pairs = []
+    mutex_event_count = 0
+    # Use a dictionary to track open locks for each mutex name
+    open_locks = {}
+
+    # Events are already sorted by timestamp from create_timeline_events
+    for event in timeline_events:
+        mutex_name = event.get("mutex")
+        event_name = event.get("event_name")
+
+        if not mutex_name or not event_name:
+            continue
+
+        mutex_event_count += 1
+        if event_name == "mutex_create":
+            if mutex_name not in open_locks:
+                open_locks[mutex_name] = []
+            # Push the create event onto a stack for this mutex
+            open_locks[mutex_name].append(event)
+
+        elif event_name == "mutex_unlock":
+            # If there's an open lock for this mutex, pop it and create a pair
+            if mutex_name in open_locks and open_locks[mutex_name]:
+                create_event = open_locks[mutex_name].pop()
+                mutex_pairs.append(
+                    {"mutex": mutex_name, "start_event": create_event, "end_event": event}
+                )
+
+    return mutex_pairs, mutex_event_count
 
 
 def create_timeline_events(all_job_details: dict) -> list:
@@ -85,33 +150,20 @@ def analyze():
         "log_downloads": [],
         "log_parsing": [],
         "cache_hits": 0,
+        "mutex_pairing": {},
     }
     try:
         app.logger.info(f"Received analysis request for URL: {log_url}")
-        parsed_url = urlparse(log_url)
-        hostname = parsed_url.hostname
-        debug_log.append({"level": "info", "message": f"Parsed hostname: {hostname}"})
-        app.logger.info(f"Parsed hostname: {hostname}")
 
-        match = re.search(r"/tests/(\d+)", parsed_url.path)
-        if not match:
-            error_msg = "Error: Could not find job ID in the URL."
+        try:
+            client = OpenQAClientWrapper(log_url, app.logger)
+            hostname = client.hostname
+            job_id = client.job_id
+        except (ValueError, OpenQAClientError) as e:
+            error_msg = f"Error parsing URL: {e}"
             debug_log.append({"level": "error", "message": error_msg})
             app.logger.error(error_msg)
             return jsonify({"error": error_msg, "debug_log": debug_log}), 400
-        job_id = match.group(1)
-        debug_log.append({"level": "info", "message": f"Extracted job ID: {job_id}"})
-        app.logger.info(f"Extracted job ID: {job_id}")
-
-        client = OpenQA_Client(server=hostname)
-        client.session.verify = False
-        debug_log.append(
-            {
-                "level": "warning",
-                "message": "SSL certificate verification has been disabled. This is insecure.",
-            }
-        )
-        app.logger.warning("SSL certificate verification has been disabled.")
 
         all_job_details = {}
         jobs_to_fetch = [job_id]
@@ -125,7 +177,7 @@ def analyze():
                 continue
             fetched_jobs.add(current_job_id)
 
-            cache_host_dir = os.path.join(CACHE_DIR, hostname)
+            cache_host_dir = os.path.join(CACHE_DIR, client.hostname)
             cache_file_path = os.path.join(cache_host_dir, f"{current_job_id}.json")
             job_details = None
 
@@ -145,40 +197,25 @@ def analyze():
                 debug_log.append(
                     {
                         "level": "info",
-                        "message": f"Cache miss for job {current_job_id}. Fetching from API...",
+                        "message": f"Cache miss for job {current_job_id} or ignore_cache:{ignore_cache}. Fetching from openQA...",
                     }
                 )
                 try:
                     api_call_start = time.perf_counter()
-                    job_details_response = client.openqa_request(
-                        "GET", f"jobs/{current_job_id}"
-                    )
+                    job_details = client.get_job_details(current_job_id)
                     api_call_end = time.perf_counter()
                     performance_metrics["api_calls"].append(
-                        {
-                            "job_id": current_job_id,
-                            "duration": api_call_end - api_call_start,
-                        }
+                        {"job_id": current_job_id, "duration": api_call_end - api_call_start}
                     )
-                    job_details = job_details_response.get("job")
-
-                    if not job_details:
-                        all_job_details[current_job_id] = {
-                            "error": f"Error: Could not find 'job' key in the API response for ID {current_job_id}."
-                        }
-                        continue
-
-                    job_details["is_cached"] = False
-
-                except RequestError as e:
-                    error_message = f"API Error from {hostname} for job {current_job_id}: Status {e.status_code} - {e.text}"
+                except OpenQAClientAPIError as e:
+                    error_message = str(e)
                     all_job_details[current_job_id] = {"error": error_message}
                     debug_log.append({"level": "error", "message": error_message})
                     continue
 
             if job_details:
                 job_details["short_name"] = format_job_name(job_details.get("name", ""))
-                job_details["job_url"] = f"https://{hostname}/t{current_job_id}"
+                job_details["job_url"] = client.get_job_url(current_job_id)
                 all_job_details[current_job_id] = job_details
 
                 for relation in ["children", "parents"]:
@@ -203,48 +240,34 @@ def analyze():
                     with open(cache_file_path, "r") as f:
                         cached_data = json.load(f)
                         log_content = cached_data.get("log_content")
-                else:
+
+                if not log_content:
                     try:
-                        log_file_url = f"https://{hostname}/tests/{job_id_key}/file/autoinst-log.txt"
                         log_download_start = time.perf_counter()
-                        log_response = client.session.get(log_file_url, timeout=30)
+                        log_content = client.get_log_content(
+                            job_id_key, "autoinst-log.txt"
+                        )
                         log_download_end = time.perf_counter()
                         performance_metrics["log_downloads"].append(
                             {
                                 "job_id": job_id_key,
                                 "duration": log_download_end - log_download_start,
-                                "size_bytes": len(log_response.content),
+                                "size_bytes": len(log_content.encode("utf-8")),
                             }
                         )
-                        log_response.raise_for_status()
-                        log_content = log_response.text
-
-                        if not job_details.get("is_cached"):
-                            os.makedirs(
-                                os.path.join(CACHE_DIR, hostname), exist_ok=True
+                        # Save the newly downloaded log to cache
+                        os.makedirs(os.path.join(CACHE_DIR, hostname), exist_ok=True)
+                        with open(
+                            os.path.join(CACHE_DIR, hostname, f"{job_id_key}.json"), "w"
+                        ) as f:
+                            json.dump(
+                                {"job_details": job_details, "log_content": log_content}, f
                             )
-                            with open(
-                                os.path.join(CACHE_DIR, hostname, f"{job_id_key}.json"),
-                                "w",
-                            ) as f:
-                                json.dump(
-                                    {
-                                        "job_details": job_details,
-                                        "log_content": log_content,
-                                    },
-                                    f,
-                                )
-                            debug_log.append(
-                                {
-                                    "level": "info",
-                                    "message": f"Cached data for job {job_id_key}.",
-                                }
-                            )
-
-                    except requests.exceptions.RequestException as log_e:
-                        error_msg = (
-                            f"Failed to download log for job {job_id_key}: {log_e}"
+                        debug_log.append(
+                            {"level": "info", "message": f"Cached data for job {job_id_key}."}
                         )
+                    except OpenQAClientLogDownloadError as e:
+                        error_msg = str(e)
                         job_details["autoinst-log"] = f"ERROR: {error_msg}"
                         debug_log.append({"level": "error", "message": error_msg})
 
@@ -263,7 +286,7 @@ def analyze():
 
                     if parser_to_use:
                         log_parsing_start = time.perf_counter()
-                        parsed_log, optional_columns = parse_autoinst_log(
+                        parsed_log, optional_columns, line_count, match_count = parse_autoinst_log(
                             log_content,
                             parser_to_use["channels"],
                             timestamp_re,
@@ -276,6 +299,8 @@ def analyze():
                             {
                                 "job_id": job_id_key,
                                 "duration": log_parsing_end - log_parsing_start,
+                                "line_count": line_count,
+                                "match_count": match_count,
                             }
                         )
                         job_details["parser_name"] = parser_to_use["name"]
@@ -301,6 +326,17 @@ def analyze():
             timeline_creation_end - timeline_creation_start
         )
 
+        # Find mutex pairs for arrow visualization
+        mutex_pairing_start = time.perf_counter()
+        mutex_pairs, mutex_events_found = find_mutex_pairs(timeline_events)
+        mutex_pairing_end = time.perf_counter()
+        performance_metrics["mutex_pairing"] = {
+            "duration": mutex_pairing_end - mutex_pairing_start,
+            "total_events_processed": len(timeline_events),
+            "mutex_events_found": mutex_events_found,
+            "pairs_created": len(mutex_pairs),
+        }
+
         # Generate a list of unique event types to be used by the frontend for coloring
         all_types = set()
         for parser in autoinst_log_parsers:
@@ -315,6 +351,7 @@ def analyze():
             "debug_log": debug_log,
             "timeline_events": timeline_events,
             "event_types": sorted(list(all_types)),
+            "mutex_pairs": mutex_pairs,
         }
         json_response_data = json.dumps(response_data)
         performance_metrics["response_size_bytes"] = len(

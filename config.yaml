@@ -2,7 +2,7 @@ config_ver: 2
 autoinst_parser:
   - name: SAPHanaSR
     match_name: |-
-      .*SAPHanaSR-ScaleUp-PerfOpt.*
+      .*(?P<name>SAPHanaSR-ScaleUp-PerfOpt).*
     channels:
       - name: "module_start"
         type: "module"

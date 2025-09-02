@@ -26,7 +26,7 @@ def parse_autoinst_log(
     patterns: List[Dict[str, Any]],
     timestamp_re: Pattern,
     perl_exception_re: Pattern,
-) -> Tuple[List[Dict[str, Any]], List[str]]:
+) -> Tuple[List[Dict[str, Any]], List[str], int, int]:
     """
     Parses the content of an autoinst-log.txt file to extract only the lines
     containing specific keywords. It also extracts any named groups from the regex
@@ -44,10 +44,14 @@ def parse_autoinst_log(
         - A list of dictionaries, where each dictionary represents a relevant
           log line or exception block. For exceptions, the timestamp is None.
         - A sorted list of unique optional column names found in the logs.
+        - The total number of lines processed from the log content.
+        - The total number of matched events (log lines or exceptions) found.
     """
     parsed_log = []
     optional_columns = set()
     lines = log_content.splitlines()
+    line_count = len(lines)
+    match_count = 0
     i = 0
     last_timestamp = None
     while i < len(lines):
@@ -72,11 +76,13 @@ def parse_autoinst_log(
                             "timestamp": timestamp,
                             "message": message,
                             "type": channel["type"],
+                            "event_name": channel["name"],
                         }
                         group_dict = search_match.groupdict()
                         log_entry.update(group_dict)
                         optional_columns.update(group_dict.keys())
                         parsed_log.append(log_entry)
+                        match_count += 1
                         break  # Found a match, go to the next line
                 i += 1
             else:
@@ -99,6 +105,7 @@ def parse_autoinst_log(
                             "type": "exception",
                         }
                         parsed_log.append(log_entry)
+                        match_count += 1
         except Exception as e:
             # Add context to the exception and re-raise it.
             # This will be caught by the `analyze` function's error handler.
@@ -107,4 +114,4 @@ def parse_autoinst_log(
                 f"Log parsing failed at line {i + 1}: '{line_content}'"
             ) from e
 
-    return parsed_log, sorted(list(optional_columns))
+    return parsed_log, sorted(list(optional_columns)), line_count, match_count
