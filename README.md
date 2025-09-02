@@ -1,4 +1,4 @@
-=# openQA Log Visualizer
+# openQA Log Visualizer
 
 A web-based tool to analyze and visualize logs from multiple, related openQA jobs. It automatically discovers parallel jobs, parses their logs for key events, and merges them into a single interactive timeline, making it easier to debug complex multi-machine test scenarios.
 
@@ -40,7 +40,8 @@ This tool automates that process by:
     ```
 
 2.  **Python dependencies:**
-    This project uses `uv` to manage dependencies, which are listed in the `pyproject.toml` file. `uv` will handle the creation of a virtual environment and the installation of dependencies automatically.
+    This project uses `uv` to manage dependencies, which are listed in the `pyproject.toml` file. `uv` will handle the creation of a virtual environment and the installation of dependencies automatically. This means you do not need to use pip to create a virtual environment. Just run the application using `uv run` as explained below.
+
 
 ## Configuration
 
@@ -48,7 +49,7 @@ The core of the log parsing logic is controlled by the `config.yaml` file. This 
 
 The application matches a job to a parser based on its name and then uses the channels within that parser to find and categorize important log entries.
 
-For detailed information on the structure of `config.yaml`, how to define parsers, and best practices for writing effective regular expression patterns, please refer to the **Configuration Documentation**.
+For detailed information on the structure of `config.yaml`, how to define parsers, and best practices for writing effective regular expression patterns, please refer to the **Configuration Documentation** (TBD).
 
 ## Usage
 
