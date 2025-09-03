@@ -6,11 +6,11 @@ from app import load_configuration
 def test_load_configuration_success(tmp_path, app_logger, monkeypatch):
     """Tests successful loading of a valid configuration file."""
     config_content = {
+        "max_jobs_to_explore": 20,
         "autoinst_parser": [
             {
                 "name": "test_parser",
                 "match_name": ".*(?P<name>test).*",
-                "max_jobs_to_explore": 20,
                 "channels": [{"name": "test_channel", "pattern": ".*hello.*", "type": "test"}],
             }
         ]
