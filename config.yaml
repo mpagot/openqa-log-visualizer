@@ -16,7 +16,7 @@ autoinst_parser:
           finished (?P<module>\S+) \S+ (runtime: \d+ s)
   - name: multimachine
     match_name: |-
-      .*(?P<name>support_?server|\d?nodes?_?\d+|qnetd_server).*
+      .*(?P<name>support_?server|\d?nodes?_?\d+|qnetd_server|sles4sap_ensa_ers_node).*
     channels:
       - name: "error_mutex_lock_owner_finished"
         type: "error"
