@@ -1,4 +1,7 @@
-const floatingControls = document.getElementById('floating-controls');
+import { ApiClient } from './apiClient.js';
+import * as renderer from './renderer.js';
+import { initializeTimeline } from './timelineRenderer.js';
+
 const toggleBtn = document.getElementById('toggle-all-btn');
 const scrollTopBtn = document.getElementById('scroll-top-btn');
 let areAllExpanded = false;
@@ -14,28 +17,48 @@ scrollTopBtn.addEventListener('click', () => {
 });
 
 let highlightedRow = null;
+const apiClient = new ApiClient();
+
+/**
+ * Handles a click on an event circle in the timeline.
+ * This function is passed as a callback to the timeline renderer.
+ * @param {object} event - The event data associated with the clicked circle.
+ */
+function handleTimelineEventClick(event) {
+    if (highlightedRow) {
+        highlightedRow.classList.remove('highlighted-row');
+    }
+
+    const targetElement = document.getElementById(`autoinst-log-${event.job_id}`);
+    const targetRow = document.getElementById(`log-row-${event.job_id}-${event.log_index}`);
+
+    if (targetElement && targetRow) {
+        targetRow.classList.add('highlighted-row');
+        highlightedRow = targetRow;
+        targetElement.open = true; // Ensure the section is expanded
+        setTimeout(() => {
+            targetRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 100);
+    }
+}
+
 document.getElementById('log-form').addEventListener('submit', function(event) {
     event.preventDefault();
     const logUrl = document.getElementById('log_url').value;
     const ignoreCache = document.getElementById('ignore_cache').checked;
-    const jobDetailsContainer = document.getElementById('job-details-container');
-    const timelineContainer = document.getElementById('timeline-container');
-    const debugLogContent = document.getElementById('debug-log-content');
-    const floatingControls = document.getElementById('floating-controls');
 
-    // Clear previous results and show loading message
-    jobDetailsContainer.innerHTML = '<pre>Analyzing...</pre>';
-    timelineContainer.innerHTML = '';
-    debugLogContent.innerHTML = '';
+    const elements = {
+        jobDetailsContainer: document.getElementById('job-details-container'),
+        timelineContainer: document.getElementById('timeline-container'),
+        debugLogContent: document.getElementById('debug-log-content')
+    };
 
-    fetch('/analyze', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ log_url: logUrl, ignore_cache: ignoreCache })
-    })
-    .then(response => response.json())
+    // 1. Clear previous results and show loading state
+    renderer.clearUI(elements);
+    renderer.renderLoading(elements.jobDetailsContainer);
+    renderer.toggleFloatingControls(false);
+
+    apiClient.analyze(logUrl, ignoreCache)
     .then(data => {
         // --- DEBUG LOGS for data structure validation ---
         console.group('Backend Data Analysis');
@@ -59,20 +82,11 @@ document.getElementById('log-form').addEventListener('submit', function(event) {
         }
         console.groupEnd();
         // --- END DEBUG LOGS ---
-        jobDetailsContainer.innerHTML = ''; // Clear 'Analyzing...' message
-
-        // Handle debug log first, as it should be present in both success and error responses
-        if (data.debug_log && Array.isArray(data.debug_log)) {
-            data.debug_log.forEach(log => {
-                const logEntry = document.createElement('div');
-                logEntry.textContent = `[${log.level.toUpperCase()}] ${log.message}`;
-                logEntry.className = `log-${log.level}`; // Assign class for styling
-                debugLogContent.appendChild(logEntry);
-            });
-        }
+        renderer.clearUI(elements); // Clear loading message
+        renderer.renderDebugLog(data.debug_log, elements.debugLogContent);
 
         // Handle timeline visualization
-        if (data.timeline_events && data.timeline_events.length > 0) {
+        if (data.timeline_events?.length > 0) {
             // Define color palette in the frontend
             const COLOR_PALETTE = [
                 '#007bff', '#28a745', '#fd7e14', '#6f42c1', '#dc3545', '#17a2b8',
@@ -86,138 +100,38 @@ document.getElementById('log-form').addEventListener('submit', function(event) {
                     typeColorMap[type] = COLOR_PALETTE[i % COLOR_PALETTE.length];
                 });
             }
-            setupTimeline(data.timeline_events, data.jobs, 'timeline-container', typeColorMap, data.event_pairs);
+            initializeTimeline(data.timeline_events, data.jobs, 'timeline-container', typeColorMap, data.event_pairs, handleTimelineEventClick);
         } else {
-            timelineContainer.innerHTML = '<p>No timeline events to display.</p>';
+            elements.timelineContainer.innerHTML = '<p>No timeline events to display.</p>';
         }
 
         // Handle main content (job details or error)
         if (data.error) {
-            const errorPre = document.createElement('pre');
-            errorPre.textContent = `Error: ${data.error}`;
-            jobDetailsContainer.appendChild(errorPre);
+            renderer.renderError(data.error, elements.jobDetailsContainer);
         } else if (data.jobs) {
-            // Reset state and show floating controls for new results
             areAllExpanded = false;
-            const toggleBtn = document.getElementById('toggle-all-btn');
             toggleBtn.textContent = 'Expand All';
-            floatingControls.style.display = 'block';
-
-            for (const jobId in data.jobs) {
-                const jobDetails = data.jobs[jobId];
-
-                const jobDiv = document.createElement('div');
-                jobDiv.className = 'job-entry';
-
-                const title = document.createElement('h3');
-                const jobLink = document.createElement('a');
-                jobLink.href = jobDetails.job_url;
-                jobLink.textContent = jobId;
-                jobLink.target = '_blank';
-                jobLink.rel = 'noopener noreferrer';
-
-                title.appendChild(jobLink);
-
-                if (jobDetails.error) {
-                    title.append(` - Error fetching details`);
-                } else {
-                    title.append(` - ${jobDetails.short_name}`);
-                    if (jobDetails.parser_name) {
-                        const parserSpan = document.createElement('span');
-                        parserSpan.textContent = ` [Parser: ${jobDetails.parser_name}]`;
-                        parserSpan.style.color = '#888';
-                        parserSpan.style.fontStyle = 'italic';
-                        title.appendChild(parserSpan);
-                    }
-                    if (jobDetails.is_cached) {
-                        const cachedSpan = document.createElement('span');
-                        cachedSpan.textContent = ' [Cached]';
-                        cachedSpan.style.color = '#888';
-                        cachedSpan.style.fontStyle = 'italic';
-                        title.appendChild(cachedSpan);
-                    }
-                }
-
-                jobDiv.appendChild(title);
-
-                // Create a non-collapsible table for result, reason, and state
-                const resultTable = document.createElement('table');
-                const tbody = document.createElement('tbody');
-                const resultFields = ['result', 'reason', 'state'];
-                resultFields.forEach(field => {
-                    if (jobDetails[field]) {
-                        const row = tbody.insertRow();
-                        const keyCell = row.insertCell();
-                        keyCell.textContent = field.charAt(0).toUpperCase() + field.slice(1);
-                        keyCell.className = 'settings-key';
-                        const valueCell = row.insertCell();
-                        valueCell.textContent = jobDetails[field];
-                        valueCell.className = 'settings-value';
-                    }
-                });
-                resultTable.appendChild(tbody);
-                jobDiv.appendChild(resultTable);
-
-                // Separate specific fields to be collapsible
-                const autoinstLog = jobDetails['autoinst-log'];
-                const settings = jobDetails['settings'];
-                const exceptions = [];
-
-                // Create a copy of jobDetails to show the rest
-                const otherDetails = { ...jobDetails };
-                delete otherDetails['autoinst-log'];
-                delete otherDetails['settings'];
-                delete otherDetails['result'];
-                delete otherDetails['reason'];
-                delete otherDetails['state'];
-
-                // Collect full exception messages and their original index
-                if (autoinstLog && Array.isArray(autoinstLog)) {
-                    autoinstLog.forEach((entry, index) => {
-                        if (entry.type === 'exception') {
-                            exceptions.push({ message: entry.message, log_index: index });
-                        }
-                    });
-                }
-                jobDetails.exceptions = exceptions;
-
-                if (settings) {
-                    jobDiv.appendChild(createCollapsibleSection('Settings', settings));
-                }
-
-                if (autoinstLog) {
-                    const logSection = createCollapsibleSection('autoinst-log', jobDetails, jobId);
-                    logSection.id = `autoinst-log-${jobId}`;
-                    jobDiv.appendChild(logSection);
-                }
-
-                if (exceptions.length > 0) {
-                    jobDiv.appendChild(createCollapsibleSection('Exceptions', jobDetails, jobId));
-                }
-
-                // Display the rest of the details in a collapsible section
-                jobDiv.appendChild(createCollapsibleSection('Other Details', otherDetails));
-
-                jobDetailsContainer.appendChild(jobDiv);
-            }
+            renderer.toggleFloatingControls(true);
+            renderer.renderJobDetails(data.jobs, elements.jobDetailsContainer);
         } else {
             // Fallback for unexpected structure from a 2xx response
-            const fallbackPre = document.createElement('pre');
-            fallbackPre.textContent = 'Received an unexpected response structure.\n\n' + JSON.stringify(data, null, 2);
-            jobDetailsContainer.appendChild(fallbackPre);
+            const fallbackMessage = 'Received an unexpected response structure.\n\n' + JSON.stringify(data, null, 2);
+            renderer.renderError(fallbackMessage, elements.jobDetailsContainer);
         }
     })
     .catch(error => {
         console.error('Fetch Error:', error);
-        jobDetailsContainer.innerHTML = '<pre>A client-side error occurred. See debug log for details.</pre>';
-        const errorEntry = document.createElement('div');
-        errorEntry.textContent = `[FATAL] ${error.message}. Is the server running?`;
-        errorEntry.className = 'log-error';
-        debugLogContent.appendChild(errorEntry);
+        renderer.clearUI(elements);
+        renderer.renderError(`A client-side error occurred: ${error.message}`, elements.jobDetailsContainer);
+        renderer.renderDebugLog([{ level: 'error', message: `[FATAL] ${error.message}. Is the server running? Check the browser console for more details.` }], elements.debugLogContent);
     });
 });
 
-document.getElementById('job-details-container').addEventListener('click', function(e) {
+// --- Event Delegation for UI interactions ---
+const jobDetailsContainer = document.getElementById('job-details-container');
+
+// Handle clicks on log links
+jobDetailsContainer.addEventListener('click', function(e) {
     if (e.target.tagName === 'A' && e.target.getAttribute('href')?.startsWith('#')) {
         const targetId = e.target.getAttribute('href').substring(1);
         const targetRow = document.getElementById(targetId);
@@ -243,629 +157,12 @@ document.getElementById('job-details-container').addEventListener('click', funct
     }
 });
 
-function setupTimeline(allEvents, jobs, containerId, typeColorMap, eventPairs) {
-    const container = document.getElementById(containerId);
-    const resetButton = document.getElementById('reset-zoom-btn');
-
-    const fullStartTime = new Date(allEvents[0].timestamp).getTime();
-    const fullEndTime = new Date(allEvents[allEvents.length - 1].timestamp).getTime();
-
-    let currentStartTime = fullStartTime;
-    let currentEndTime = fullEndTime;
-
-    function renderCurrentView() {
-        renderTimeline(allEvents, jobs, container, currentStartTime, currentEndTime, typeColorMap, eventPairs);
-    }
-
-    resetButton.addEventListener('click', () => {
-        currentStartTime = fullStartTime;
-        currentEndTime = fullEndTime;
-        renderCurrentView();
-        resetButton.style.display = 'none';
-    });
-
-    // --- Robust Drag-to-Zoom Implementation ---
-    let selectionRect = null;
-    let startX = 0;
-    let isDragging = false;
-
-    function onMouseDown(e) {
-        const svg = container.querySelector('.timeline-svg');
-        if (!svg || e.target.tagName.toLowerCase() !== 'svg') return;
-
-        const gRect = svg.querySelector('g').getBoundingClientRect();
-        if (e.clientX < gRect.left || e.clientX > gRect.right) {
-             return;
-        }
-
-        isDragging = true;
-        const svgRect = svg.getBoundingClientRect();
-        startX = e.clientX - svgRect.left;
-
-         selectionRect = document.createElement('div');
-         selectionRect.className = 'timeline-selection';
-         selectionRect.style.left = `${startX}px`;
-         selectionRect.style.top = `${gRect.top - svgRect.top}px`;
-         selectionRect.style.height = `${gRect.height}px`;
-         selectionRect.style.width = '0px';
-         container.appendChild(selectionRect);
-        e.preventDefault();
-
-        // Attach move and up listeners to the document to capture events globally
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
-    }
-
-    function onMouseMove(e) {
-        if (!isDragging || !selectionRect) return;
-        const svg = container.querySelector('.timeline-svg');
-        const svgRect = svg.getBoundingClientRect();
-        const currentX = e.clientX - svgRect.left;
-        selectionRect.style.width = `${Math.abs(currentX - startX)}px`;
-        selectionRect.style.left = `${Math.min(currentX, startX)}px`;
-    }
-
-    function onMouseUp(e) {
-        if (!isDragging) return;
-        isDragging = false;
-
-        // Clean up global listeners
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
-
-        if (selectionRect) {
-            container.removeChild(selectionRect);
-            selectionRect = null;
-        }
-
-        const svg = container.querySelector('.timeline-svg');
-        if (!svg) return;
-        const svgRect = svg.getBoundingClientRect();
-        const endX = e.clientX - svgRect.left;
-
-        if (Math.abs(endX - startX) < 10) return;
-
-        const gTransform = svg.querySelector('g').getAttribute('transform');
-        const marginLeft = parseFloat(gTransform.match(/translate\(([\d.]+)/)[1]);
-        const marginRight = 50;
-        const chartWidth = svgRect.width - marginLeft - marginRight;
-
-        const timeDomain = currentEndTime - currentStartTime;
-
-        const startPos = Math.max(0, Math.min(startX, endX) - marginLeft);
-        const endPos = Math.min(chartWidth, Math.max(startX, endX) - marginLeft);
-
-        const newStartTime = currentStartTime + (startPos / chartWidth) * timeDomain;
-        const newEndTime = currentStartTime + (endPos / chartWidth) * timeDomain;
-
-        currentStartTime = newStartTime;
-        currentEndTime = newEndTime;
-
-        renderCurrentView();
-        resetButton.style.display = 'inline-block';
-    }
-
-    container.addEventListener('mousedown', onMouseDown);
-    renderCurrentView();
-}
-
-function renderTimeline(allEvents, jobs, container, startTime, endTime, typeColorMap, eventPairs) {
-    container.innerHTML = '';
-
-    const getShortName = (jobId) => {
-        if (jobs && jobs[jobId] && jobs[jobId].short_name) {
-            return jobs[jobId].short_name;
-        }
-        return jobId; // Fallback to job id if not found
-    };
-
-    const events = allEvents.filter(e => {
-        const t = new Date(e.timestamp).getTime();
-        return t >= startTime && t <= endTime;
-    });
-
-    const participants = [...new Set(allEvents.map(e => getShortName(e.job_id)))].sort();
-    const margin = { top: 20, right: 50, bottom: 40, left: 120 };
-    const width = container.clientWidth - margin.left - margin.right;
-    const height = participants.length * 40 + margin.top + margin.bottom;
-
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute('class', 'timeline-svg');
-    svg.setAttribute('width', width + margin.left + margin.right);
-    svg.setAttribute('height', height);
-    container.appendChild(svg);
-
-    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-    defs.innerHTML = `
-        <marker id="arrowhead" viewBox="0 0 10 10" refX="8" refY="5"
-            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"></path>
-        </marker>
-    `;
-    svg.appendChild(defs);
-
-    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    g.setAttribute('transform', `translate(${margin.left},${margin.top})`);
-    svg.appendChild(g);
-
-    // Time scale
-    const timeDomain = endTime - startTime;
-
-    const xScale = (timestamp) => {
-        const eventTime = new Date(timestamp).getTime();
-        if (timeDomain === 0) return width / 2;
-        return ((eventTime - startTime) / timeDomain) * width;
-    };
-
-    // Participant scale (Y-axis)
-    const yScale = (participant) => {
-        return participants.indexOf(participant) * 40 + 20;
-    };
-
-    // Draw participant labels and lifelines
-    participants.forEach(p => {
-        const y = yScale(p);
-        const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        label.setAttribute('x', -10);
-        label.setAttribute('y', y);
-        label.setAttribute('text-anchor', 'end');
-        label.setAttribute('dominant-baseline', 'middle');
-        label.setAttribute('class', 'timeline-participant-label');
-        label.textContent = p;
-        g.appendChild(label);
-
-        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-        line.setAttribute('x1', 0);
-        line.setAttribute('x2', width);
-        line.setAttribute('y1', y);
-        line.setAttribute('y2', y);
-        line.setAttribute('stroke', '#ccc');
-        line.setAttribute('stroke-dasharray', '2,2');
-        g.appendChild(line);
-    });
-
-    // Draw time axis
-    const timeAxis = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    timeAxis.setAttribute('transform', `translate(0, ${height - margin.top - margin.bottom + 10})`);
-    g.appendChild(timeAxis);
-
-    const axisLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    axisLine.setAttribute('x1', 0);
-    axisLine.setAttribute('x2', width);
-    axisLine.setAttribute('stroke', 'black');
-    timeAxis.appendChild(axisLine);
-
-    const startLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    startLabel.setAttribute('x', 0);
-    startLabel.setAttribute('y', 20);
-    startLabel.textContent = new Date(startTime).toLocaleTimeString();
-    timeAxis.appendChild(startLabel);
-
-    const endLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    endLabel.setAttribute('x', width);
-    endLabel.setAttribute('y', 20);
-    endLabel.setAttribute('text-anchor', 'end');
-    endLabel.textContent = new Date(endTime).toLocaleTimeString();
-    timeAxis.appendChild(endLabel);
-
-    // Tooltip
-    const tooltip = document.createElement('div');
-    tooltip.className = 'timeline-tooltip';
-    container.appendChild(tooltip);
-
-    // Create a layer for arrows, so we can easily hide/show them all
-    const arrowLayer = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    arrowLayer.setAttribute('class', 'arrow-layer');
-    g.appendChild(arrowLayer);
-
-    // Draw events
-    events.forEach(event => {
-        const x = xScale(event.timestamp);
-        const shortName = getShortName(event.job_id);
-        const y = yScale(shortName);
-        
-        const color = (typeColorMap && typeColorMap[event.type]) || '#808080'; // Default to gray for unknown types
-
-        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        circle.setAttribute('cx', x);
-        circle.setAttribute('cy', y);
-        circle.setAttribute('r', 5);
-        circle.setAttribute('fill', color);
-        circle.setAttribute('class', 'timeline-event-marker');
-        circle.id = `event-marker-${event.job_id}-${event.log_index}`;
-        circle.dataset.eventData = JSON.stringify(event);
-        g.appendChild(circle);
-
-        circle.addEventListener('mouseover', (e) => {
-            tooltip.style.opacity = '1';
-            tooltip.innerHTML = `<strong>${event.timestamp}</strong><br>${shortName}<br>${cleanLogMessage(event.message)}`;
-
-            // Hover-to-Trace logic
-            const eventData = JSON.parse(e.target.dataset.eventData);
-            const pairName = eventData.mutex || eventData.barrier;
-
-            if (pairName) {
-
-                // Fade unrelated events
-                g.querySelectorAll('.timeline-event-marker').forEach(c => {
-                    const cData = JSON.parse(c.dataset.eventData);
-                    const cPairName = cData.mutex || cData.barrier;
-                    if (cPairName !== pairName) {
-                        c.classList.add('faded');
-                    }
-                });
-
-                // --- DEBUG LOGS for hover interaction ---
-                console.group(`Hover Trace for: ${pairName}`);
-                const arrowSelector = `.event-arrow[data-pair-name="${pairName}"]`;
-                const arrows = arrowLayer.querySelectorAll(arrowSelector);
-                console.log(`Found ${arrows.length} arrows to show.`);
-                arrows.forEach(arrow => {
-                    arrow.style.display = 'block';
-                });
-
-                const rectSelector = `.critical-section-rect[data-pair-name="${pairName}"]`;
-                const rects = g.querySelectorAll(rectSelector);
-                console.log(`Found ${rects.length} critical section rectangles to highlight.`);
-                rects.forEach(rect => rect.style.opacity = 0.4);
-                console.groupEnd();
-
-                // Show the sync legend
-                const syncLegend = document.getElementById('sync-legend');
-                if (syncLegend) {
-                    syncLegend.style.display = 'flex';
-                }
-            }
-        });
-        circle.addEventListener('mousemove', (e) => {
-            const rect = container.getBoundingClientRect();
-            tooltip.style.left = `${e.clientX - rect.left + 15}px`;
-            tooltip.style.top = `${e.clientY - rect.top + 15}px`;
-        });
-        circle.addEventListener('mouseout', (e) => {
-            // If the mouse is moving to a critical section rectangle, don't hide the tooltip,
-            // let the rectangle's mouseover event handle it. Otherwise, hide it.
-            if (!e.relatedTarget || !e.relatedTarget.classList.contains('critical-section-rect')) {
-                tooltip.style.opacity = '0';
-            }
-
-            // Reset all fades and hide all arrows
-            g.querySelectorAll('.timeline-event-marker.faded').forEach(c => c.classList.remove('faded'));
-            arrowLayer.querySelectorAll('.event-arrow').forEach(a => {
-                a.style.display = 'none';
-            });
-            g.querySelectorAll('.critical-section-rect').forEach(r => {
-                r.style.opacity = 0.15; // Reset to default opacity
-            });
-
-            const syncLegend = document.getElementById('sync-legend');
-            if (syncLegend) {
-                syncLegend.style.display = 'none';
-            }
-        });
-
-        circle.addEventListener('click', () => {
-            if (highlightedRow) {
-                highlightedRow.classList.remove('highlighted-row');
-            }
-
-            const targetElement = document.getElementById(`autoinst-log-${event.job_id}`);
-            const targetRow = document.getElementById(`log-row-${event.job_id}-${event.log_index}`);
-
-            if (targetElement && targetRow) {
-                targetRow.classList.add('highlighted-row');
-                highlightedRow = targetRow;
-                targetElement.open = true; // Ensure the section is expanded
-                // Use a timeout to ensure the browser has rendered the expanded
-                // section before scrolling to the correct row.
-                setTimeout(() => {
-                    targetRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }, 100);
-            }
-        });
-    });
-
-    // Draw mutex arrows (initially hidden)
-    if (Array.isArray(eventPairs) && eventPairs.length > 0) {
-        console.groupCollapsed('Synchronization Rendering'); // Keep this group for debugging
-        console.log(`Processing ${eventPairs.length} event pairs.`);
-        eventPairs.forEach((pair, index) => {
-            const startEvent = pair.start_event;
-            const endEvent = pair.end_event;
-
-            const x1 = xScale(startEvent.timestamp);
-            const y1 = yScale(getShortName(startEvent.job_id));
-            const x2 = xScale(endEvent.timestamp);
-            const y2 = yScale(getShortName(endEvent.job_id));
-
-            if (!isNaN(y1) && !isNaN(y2)) {
-                if (pair.pair_type === 'mutex_lock_unlock') {
-                    const addTooltipHandlersToRect = (element, mutexName) => {
-                        element.addEventListener('mouseover', (e) => {
-                            tooltip.style.opacity = '1';
-                            tooltip.innerHTML = `Critical Section: <strong>${mutexName}</strong>`;
-                        });
-                        element.addEventListener('mousemove', (e) => {
-                            const rect = container.getBoundingClientRect();
-                            tooltip.style.left = `${e.clientX - rect.left + 15}px`;
-                            tooltip.style.top = `${e.clientY - rect.top + 15}px`;
-                        });
-                        element.addEventListener('mouseout', (e) => {
-                            tooltip.style.opacity = '0';
-                        });
-                    };
-
-                    // For lock/unlock, always draw rectangles to show the duration of the lock.
-                    const rect1 = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-                    rect1.setAttribute('x', x1);
-                    rect1.setAttribute('y', y1 - 10);
-                    rect1.setAttribute('width', x2 - x1);
-                    rect1.setAttribute('height', 20);
-                    rect1.setAttribute('class', 'critical-section-rect');
-                    rect1.setAttribute('data-pair-name', pair.mutex);
-                    g.insertBefore(rect1, arrowLayer);
-                    addTooltipHandlersToRect(rect1, pair.mutex);
-
-                    if (startEvent.job_id !== endEvent.job_id) {
-                        // If it's a cross-job lock, draw a second rectangle on the other lifeline.
-                        const rect2 = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-                        rect2.setAttribute('x', x1);
-                        rect2.setAttribute('y', y2 - 10);
-                        rect2.setAttribute('width', x2 - x1);
-                        rect2.setAttribute('height', 20);
-                        rect2.setAttribute('class', 'critical-section-rect');
-                        rect2.setAttribute('data-pair-name', pair.mutex);
-                        g.insertBefore(rect2, arrowLayer);
-                        addTooltipHandlersToRect(rect2, pair.mutex);
-                    }
-                } else {
-                    // Draw an arrow for all other synchronization types (create/unlock, barrier/wait)
-                    const arrow = document.createElementNS("http://www.w3.org/2000/svg", "line");
-                    arrow.setAttribute('x1', x1);
-                    arrow.setAttribute('y1', y1);
-                    arrow.setAttribute('x2', x2);
-                    arrow.setAttribute('y2', y2);
-
-                    const eventType = pair.mutex ? 'mutex' : 'barrier';
-                    const color = typeColorMap[eventType] || '#333';
-                    arrow.setAttribute('stroke', color);
-
-                    arrow.setAttribute('class', 'event-arrow');
-                    arrow.setAttribute('data-pair-name', pair.mutex || pair.barrier);
-                    arrow.setAttribute('marker-end', 'url(#arrowhead)');
-                    arrow.style.display = 'none'; // Hide by default
-                    arrowLayer.appendChild(arrow);
-                }
-            } else {
-                // This can happen if a job has no events within the current timeline view,
-                // so its lifeline (and thus its y-coordinate) doesn't exist.
-                console.warn(`Skipping pair #${index} because one or both lifelines are not in the current view.`, pair);
-            }
-        });
-        console.groupEnd();
-    }
-
-    // Add Legend
-    renderSynchronizationLegend(eventPairs, typeColorMap);
-    const legendContainer = document.getElementById('timeline-legend');
-    legendContainer.innerHTML = ''; // Clear previous legend
-    
-    if (typeColorMap) {
-        for (const type in typeColorMap) {
-            const legendItem = document.createElement('div');
-            legendItem.className = 'legend-item';
-
-            const colorBox = document.createElement('div');
-            colorBox.className = 'legend-color';
-            colorBox.style.backgroundColor = typeColorMap[type];
-
-            const label = document.createElement('span');
-            label.textContent = type.charAt(0).toUpperCase() + type.slice(1);
-
-            legendItem.appendChild(colorBox);
-            legendItem.appendChild(label);
-            legendContainer.appendChild(legendItem);
+// Handle collapsing sections to remove highlights
+jobDetailsContainer.addEventListener('toggle', (e) => {
+    if (e.target.tagName === 'DETAILS' && !e.target.open) {
+        if (highlightedRow && e.target.contains(highlightedRow)) {
+            highlightedRow.classList.remove('highlighted-row');
+            highlightedRow = null;
         }
     }
-}
-
-function renderSynchronizationLegend(eventPairs, typeColorMap) {
-    const legendContainer = document.getElementById('sync-legend');
-    if (!legendContainer) return;
-    legendContainer.innerHTML = ''; // Clear previous legend
- 
-    const hasMutexSignal = eventPairs.some(p => p.pair_type === 'mutex_create_unlock');
-    const hasBarrierSignal = eventPairs.some(p => p.pair_type === 'barrier_create_wait');
-    const hasLock = eventPairs.some(p => p.pair_type === 'mutex_lock_unlock');
- 
-    const legendItems = [];
- 
-    if (hasMutexSignal) {
-        const color = typeColorMap['mutex'] || '#333';
-        legendItems.push({
-            symbol: `<svg width="30" height="10"><line x1="0" y1="5" x2="30" y2="5" class="event-arrow" style="stroke: ${color}; stroke-width: 1.5;" marker-end="url(#arrowhead)"></line></svg>`,
-            label: 'Mutex Signal'
-        });
-    }
-
-    if (hasBarrierSignal) {
-        const color = typeColorMap['barrier'] || '#333';
-        legendItems.push({
-            symbol: `<svg width="30" height="10"><line x1="0" y1="5" x2="30" y2="5" class="event-arrow" style="stroke: ${color}; stroke-width: 1.5;" marker-end="url(#arrowhead)"></line></svg>`,
-            label: 'Barrier Signal'
-        });
-    }
- 
-    if (hasLock) {
-        legendItems.push({
-            symbol: '<svg width="30" height="10"><rect x="0" y="0" width="30" height="10" class="critical-section-rect" style="opacity: 0.4;"></rect></svg>',
-            label: 'Critical Section'
-        });
-    }
- 
-    if (legendItems.length > 0) {
-        legendItems.forEach(item => {
-            const legendItem = document.createElement('div');
-            legendItem.className = 'legend-item';
-            legendItem.innerHTML = `
-                <div class="legend-symbol">${item.symbol}</div>
-                <span>${item.label}</span>
-            `;
-            legendContainer.appendChild(legendItem);
-        });
-    }
-}
-
-function cleanLogMessage(message) {
-    // Remove ANSI escape codes (e.g., \u001b[37m)
-    let cleaned = message.replace(/\u001b\[.*?m/g, '');
-    // Remove the log prefix (e.g., [debug] [pid:12345])
-    cleaned = cleaned.replace(/^\[\w+\]\s\[pid:\d+\]\s*/, '');
-    return cleaned;
-}
-
-function createCollapsibleSection(title, data, jobId) {
-    const details = document.createElement('details');
-    const summary = document.createElement('summary');
-    summary.textContent = title;
-    details.appendChild(summary);
-
-    // The content might be a string (for errors)
-    if (typeof data === 'string') {
-        const pre = document.createElement('pre');
-        pre.textContent = data;
-        details.appendChild(pre);
-        return details;
-    }
-
-    const table = document.createElement('table');
-
-    if (title === 'Settings' && typeof data === 'object' && !Array.isArray(data)) {
-        const tbody = document.createElement('tbody');
-        // Sort keys for consistent order
-        for (const [key, value] of Object.entries(data).sort()) {
-            const row = tbody.insertRow();
-            const keyCell = row.insertCell();
-            keyCell.textContent = key;
-            keyCell.className = 'settings-key';
-
-            const valueCell = row.insertCell();
-            valueCell.textContent = value;
-            valueCell.className = 'settings-value';
-        }
-        table.appendChild(tbody);
-        details.appendChild(table);
-    } else if (title === 'autoinst-log') {
-        const content = data['autoinst-log'];
-        const optionalColumns = data['optional_columns'] || [];
-
-        if (!Array.isArray(content)) {
-            const pre = document.createElement('pre');
-            pre.textContent = content;
-            details.appendChild(pre);
-            return details;
-        }
-
-        table.className = 'autoinst-log-table';
-        const thead = document.createElement('thead');
-        const headerRow = thead.insertRow();
-        let columns = [
-            { name: 'Timestamp', key: 'timestamp', class: 'col-timestamp' },
-            { name: 'Type', key: 'type', class: 'col-type' },
-        ];
-
-        optionalColumns.forEach(colKey => {
-            const colName = colKey.charAt(0).toUpperCase() + colKey.slice(1).replace(/_/g, ' ');
-            columns.push({
-                name: colName,
-                key: colKey,
-                class: `col-${colKey}`
-            });
-        });
-
-        columns.push({ name: 'Message', key: 'message', class: 'col-message' });
-
-        columns.forEach(col => {
-            const th = document.createElement('th');
-            th.textContent = col.name;
-            th.className = col.class;
-            headerRow.appendChild(th);
-        });
-        table.appendChild(thead);
-
-        const tbody = document.createElement('tbody');
-        content.forEach((logEntry, index) => {
-            const row = tbody.insertRow();
-            row.id = `log-row-${jobId}-${index}`;
-            columns.forEach(col => {
-                const cell = row.insertCell();
-                const cellValue = logEntry[col.key] || '';
-                let cellText = cellValue;
-
-                // For exceptions, show only the first significant line in the table.
-                if (col.key === 'message' && logEntry.type === 'exception') {
-                    const match = cellText.match(/.* at .*?\.pm line \d+\.?/);
-                    if (match) {
-                        cellText = match[0];
-                    } else {
-                        cellText = cellText.split('\n')[0];
-                    }
-
-                    const exceptionIndex = data.exceptions.findIndex(ex => ex.log_index === index);
-                    if (exceptionIndex !== -1) {
-                        const link = document.createElement('a');
-                        link.href = `#exception-row-${jobId}-${exceptionIndex}`;
-                        link.textContent = cellText;
-                        cell.appendChild(link);
-                        return; // Skip default textContent assignment
-                    }
-                }
-                cell.textContent = cellText;
-                cell.className = col.class;
-            });
-        });
-        table.appendChild(tbody);
-        details.appendChild(table);
-        details.addEventListener('toggle', () => {
-            if (!details.open && highlightedRow && details.contains(highlightedRow)) {
-                highlightedRow.classList.remove('highlighted-row');
-                highlightedRow = null;
-            }
-        });
-    } else if (title === 'Exceptions') {
-        const exceptions = data.exceptions || [];
-        table.style.width = '100%';
-        const tbody = document.createElement('tbody');
-        exceptions.forEach((exception, index) => {
-            const row = tbody.insertRow();
-            row.id = `exception-row-${jobId}-${index}`;
-            const cell = row.insertCell();
-
-            const backLinkContainer = document.createElement('div');
-            backLinkContainer.style.marginBottom = '0.5em';
-            const backLink = document.createElement('a');
-            backLink.href = `#log-row-${jobId}-${exception.log_index}`;
-            backLink.textContent = `[Go to log line ${exception.log_index + 1}]`;
-            backLinkContainer.appendChild(backLink);
-            cell.appendChild(backLinkContainer);
-
-            // Using <pre> preserves whitespace and newlines from the exception text
-            const pre = document.createElement('pre');
-            pre.textContent = exception.message;
-            // Reset some default <pre> styling to make it look better in a table cell
-            pre.style.margin = '0';
-            pre.style.padding = '0';
-            pre.style.border = 'none';
-            pre.style.backgroundColor = 'transparent';
-            cell.appendChild(pre);
-        });
-        table.appendChild(tbody);
-        details.appendChild(table);
-    } else {
-        // Fallback to <pre> for other content
-        const pre = document.createElement('pre');
-        pre.textContent = JSON.stringify(data, null, 2);
-        details.appendChild(pre);
-    }
-    return details;
-}
+}, true); // Use capture phase to handle event before it bubbles

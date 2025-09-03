@@ -48,13 +48,34 @@ If you'd like to contribute code, please feel free to fork the repository and su
     cd openqa-log-visualizer
     ```
 
-2.  **Install dependencies:**
+2.  **Install the python dependencies:**
     This project uses `uv` to manage dependencies. The first time you run a command with `uv run`, it will automatically create a virtual environment and install the required packages from `pyproject.toml`.
 
 ## Running the Tests
 
-This project uses `pytest` for testing. To run the unit tests, use the following command from the root of the project:
+This project contains both backend (Python) and frontend (JavaScript) tests.
+
+### Backend Tests
+
+The backend tests use `pytest`. To run them, use the following command from the root of the project:
 
 ```bash
 uv run pytest tests/backend/
+```
+
+### Frontend Tests
+The frontend unit tests use Vitest and require Node.js and npm to be installed.
+
+#### Setup
+The project's frontend dependencies are defined in package.json. To install them, you can run:
+
+```bash
+npm install
+```
+
+#### Running
+A `Makefile` is provided to simplify running the tests. This command will automatically install the dependencies if they are not already present, and then run the test suite:
+
+```bash
+make test-frontend
 ```

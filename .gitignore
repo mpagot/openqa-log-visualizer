@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 .cache/
+.secrets/
+node_modules/

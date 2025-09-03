@@ -73,6 +73,27 @@ For detailed information on the structure of `config.yaml`, how to define parser
     For a detailed guide on how to use the web interface and interpret the results, please see the **Usage Guide**.
 
 ## Project Status
+## Testing
+
+This project includes both backend and frontend tests.
+
+### Backend Tests
+
+The backend tests are written using `pytest`. To run them:
+
+```bash
+uv run pytest tests/backend/
+```
+
+### Frontend Tests
+
+The frontend unit tests are written using `Vitest`. They require Node.js to be installed.
+
+To install dependencies and run the tests, you can use the provided Makefile:
+
+```bash
+make test-frontend
+```
 
 This project is currently a **Proof of Concept (PoC)** and is under active development. It should be considered a work-in-progress.
 
