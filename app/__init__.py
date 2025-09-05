@@ -17,15 +17,14 @@ def load_configuration(app_logger: logging.Logger) -> tuple:
     Returns:
         A tuple containing:
         - CACHE_DIR: The path to the cache directory.
+        - CACHE_MAX_SIZE: The path to the cache directory.
         - autoinst_log_parsers: The list of parser configurations with compiled regexes.
         - timestamp_re: Compiled regex for parsing timestamps.
         - perl_exception_re: Compiled regex for parsing Perl exceptions.
         - max_jobs_to_explore: The maximum number of related jobs to discover.
     """
-    CACHE_DIR = "./.cache"
-
     # Load configuration from YAML file
-    CONFIG_FILE = os.environ.get("CONFIG_FILE", "config.yaml")
+    CONFIG_FILE = os.environ.get("OQTV_CONFIG_FILE", "config.yaml")
     try:
         with open(CONFIG_FILE, "r") as f:
             config = yaml.safe_load(f)
@@ -35,6 +34,15 @@ def load_configuration(app_logger: logging.Logger) -> tuple:
 
     autoinst_log_parsers = config.get("autoinst_parser", [])
     max_jobs_to_explore = config.get("max_jobs_to_explore", 10)
+    CACHE_DIR = "./.cache"
+    CACHE_MAX_SIZE = None
+    if config.get("cache"):
+        cache_cfg = config.get("cache")
+        if isinstance(cache_cfg, dict):
+            if "cache_dir" in cache_cfg:
+                CACHE_DIR = cache_cfg["cache_dir"]
+            if "cache_max_size" in cache_cfg:
+                CACHE_MAX_SIZE = int(cache_cfg["cache_max_size"])
 
     # Pre-compile all regex patterns to catch errors early and improve performance.
     for parser in autoinst_log_parsers:
@@ -81,7 +89,7 @@ def load_configuration(app_logger: logging.Logger) -> tuple:
     perl_exception_re = re.compile(r" at .*?\.pm line \d+")
 
     return (
-        CACHE_DIR,
+        CACHE_DIR, CACHE_MAX_SIZE,
         autoinst_log_parsers,
         timestamp_re,
         perl_exception_re,

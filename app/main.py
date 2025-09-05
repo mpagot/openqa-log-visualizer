@@ -20,13 +20,27 @@ app = Flask(__name__)
 
 
 (
-    CACHE_DIR,
+    CACHE_DIR, CACHE_MAX_SIZE,
     autoinst_log_parsers,
     timestamp_re,
     perl_exception_re,
     MAX_JOBS_TO_EXPLORE,
 ) = load_configuration(app.logger)
 
+
+def get_dir_size(path='.'):
+    """Calculates the total size of a directory in bytes."""
+    total = 0
+    try:
+        with os.scandir(path) as it:
+            for entry in it:
+                if entry.is_file():
+                    total += entry.stat().st_size
+                elif entry.is_dir():
+                    total += get_dir_size(entry.path)
+    except FileNotFoundError:
+        return 0 # Directory does not exist yet
+    return total
 
 def format_job_name(full_name: str) -> str:
     """
@@ -199,14 +213,27 @@ def _discover_jobs(client, initial_job_id, ignore_cache, debug_log, max_jobs):
     fetched_jobs = set()
     performance_metrics = {"api_calls": [], "cache_hits": 0}
 
+    cache_size_start_time = time.perf_counter()
+    try:
+        cache_size_bytes = get_dir_size(CACHE_DIR)
+        app.logger.info(f"Initial cache size: {cache_size_bytes / 1024 / 1024:.2f} MB")
+    except Exception as e:
+        app.logger.error(f"Failed to calculate cache size: {e}")
+        cache_size_bytes = -1
+    cache_size_duration = time.perf_counter() - cache_size_start_time
+    performance_metrics['cache_size_calc_duration'] = cache_size_duration
+    performance_metrics['initial_cache_size_bytes'] = cache_size_bytes
+
+    cache_host_dir = os.path.join(CACHE_DIR, client.hostname)
+
     discovery_loop_start = time.perf_counter()
     while jobs_to_fetch and len(fetched_jobs) < max_jobs:
         current_job_id = jobs_to_fetch.pop(0)
         if current_job_id in fetched_jobs:
+            app.logger.debug(f"Skipping already fetched job {current_job_id}.")
             continue
         fetched_jobs.add(current_job_id)
-
-        cache_host_dir = os.path.join(CACHE_DIR, client.hostname)
+    
         cache_file_path = os.path.join(cache_host_dir, f"{current_job_id}.json")
         job_details = None
 
@@ -221,6 +248,11 @@ def _discover_jobs(client, initial_job_id, ignore_cache, debug_log, max_jobs):
                 job_details = cached_data.get("job_details")
                 if job_details:
                     job_details["is_cached"] = True
+                else:
+                    app.logger.info("Missing job_details in cached_data:{cached_data}")
+        else:
+            app.logger.info(f"Cache miss for job {current_job_id} cache_file_path:{cache_file_path} and ignore_cache:{ignore_cache}.")
+
 
         if not job_details:
             debug_log.append(
@@ -263,7 +295,7 @@ def _discover_jobs(client, initial_job_id, ignore_cache, debug_log, max_jobs):
 
 def _process_job_logs(client, all_job_details, debug_log):
     """Fetch and parse logs for all discovered jobs."""
-    performance_metrics = {"log_downloads": [], "log_parsing": []}
+    performance_metrics = {"log_downloads": [], "log_parsing": [], "cache_hits": 0}
     log_processing_start = time.perf_counter()
 
     for job_id_key, job_details in all_job_details.items():
@@ -273,7 +305,9 @@ def _process_job_logs(client, all_job_details, debug_log):
             )
             continue
 
-        log_content = _get_log_from_cache(client.hostname, job_id_key)
+        log_content, was_cached = _get_log_from_cache(client.hostname, job_id_key)
+        if was_cached:
+            performance_metrics["cache_hits"] += 1
 
         if not log_content:
             log_content, perf = _get_log_from_api(client, job_id_key, job_details, debug_log)
@@ -312,11 +346,14 @@ def analyze():
     debug_log = []
     performance_metrics = {
         "total_duration": 0,
+        "cache_hits": 0
     }
     try:
+        request_start_time = time.perf_counter()
         app.logger.info(f"Received analysis request for URL: {log_url}")
 
         try:
+            app.logger.debug(f"Create instance of OpenQAClientWrapper for URL: {log_url}")
             client = OpenQAClientWrapper(log_url, app.logger)
             hostname = client.hostname
             job_id = client.job_id
@@ -336,6 +373,8 @@ def analyze():
         all_job_details, perf_logs = _process_job_logs(
             client, all_job_details, debug_log
         )
+        # Manually aggregate cache_hits from the two separate counters
+        performance_metrics["cache_hits"] += perf_logs.pop("cache_hits", 0)
         performance_metrics.update(perf_logs)
 
         # 3. Build final response data from processed jobs
@@ -378,6 +417,9 @@ def analyze():
             json_response_data.encode("utf-8")
         )
 
+        request_end_time = time.perf_counter()
+        performance_metrics["total_duration"] = request_end_time - request_start_time
+
         app.logger.info("--- Performance Metrics ---")
         app.logger.info(json.dumps(performance_metrics, indent=4))
         app.logger.info("---------------------------")
@@ -401,8 +443,10 @@ def _get_log_from_cache(hostname, job_id_key):
     if os.path.exists(cache_file_path):
         with open(cache_file_path, "r") as f:
             cached_data = json.load(f)
-            return cached_data.get("log_content")
-    return None
+            log_content = cached_data.get("log_content")
+            if log_content:
+                return log_content, True  # Return content and cache hit status
+    return None, False  # Return no content and no cache hit
 
 
 def _get_log_from_api(client, job_id_key, job_details, debug_log):

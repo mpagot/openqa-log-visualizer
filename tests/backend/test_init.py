@@ -19,8 +19,8 @@ def test_load_configuration_success(tmp_path, app_logger, monkeypatch):
     with open(config_file, "w") as f:
         yaml.dump(config_content, f)
 
-    monkeypatch.setenv("CONFIG_FILE", str(config_file))
-    _, parsers, _, _, max_jobs = load_configuration(app_logger)
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
+    _, _, parsers, _, _, max_jobs = load_configuration(app_logger)
 
     assert len(parsers) == 1
     assert parsers[0]["name"] == "test_parser"
@@ -41,7 +41,7 @@ def test_load_configuration_invalid_regex(tmp_path, app_logger, monkeypatch):
     with open(config_file, "w") as f:
         yaml.dump(config_content, f)
 
-    monkeypatch.setenv("CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
     with pytest.raises(SystemExit) as e:
         load_configuration(app_logger)
     assert e.value.code == 1
@@ -60,7 +60,7 @@ def test_load_configuration_invalid_regex_no_named_group(tmp_path, app_logger, m
     with open(config_file, "w") as f:
         yaml.dump(config_content, f)
 
-    monkeypatch.setenv("CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
     with pytest.raises(SystemExit) as e:
         load_configuration(app_logger)
     assert e.value.code == 1
@@ -73,7 +73,7 @@ def test_load_configuration_missing_parser_name(tmp_path, app_logger, monkeypatc
     with open(config_file, "w") as f:
         yaml.dump(config_content, f)
 
-    monkeypatch.setenv("CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
     with pytest.raises(SystemExit) as e:
         load_configuration(app_logger)
     assert e.value.code == 1
@@ -90,7 +90,7 @@ def test_load_configuration_missing_channel_name(tmp_path, app_logger, monkeypat
     with open(config_file, "w") as f:
         yaml.dump(config_content, f)
 
-    monkeypatch.setenv("CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
     with pytest.raises(SystemExit) as e:
         load_configuration(app_logger)
     assert e.value.code == 1
@@ -108,7 +108,7 @@ def test_load_configuration_missing_match_name_group(tmp_path, app_logger, monke
     with open(config_file, "w") as f:
         yaml.dump(config_content, f)
 
-    monkeypatch.setenv("CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
     with pytest.raises(SystemExit) as e:
         load_configuration(app_logger)
     assert e.value.code == 1
@@ -116,7 +116,7 @@ def test_load_configuration_missing_match_name_group(tmp_path, app_logger, monke
 
 def test_load_configuration_from_env_variable(tmp_path, app_logger, monkeypatch):
     """
-    Tests that CONFIG_FILE environment variable is used to load the configuration,
+    Tests that OQTV_CONFIG_FILE environment variable is used to load the configuration,
     overriding the default config.yaml in the current directory.
     """
     # Create a default config file with some content in the temp path.
@@ -145,10 +145,95 @@ def test_load_configuration_from_env_variable(tmp_path, app_logger, monkeypatch)
     # Change to the directory with the default config and set the env var
     # to point to the custom config file.
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("CONFIG_FILE", str(custom_config_file))
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(custom_config_file))
 
     # Load configuration and assert that the custom one was loaded.
-    _, parsers, _, _, _ = load_configuration(app_logger)
+    _, _, parsers, _, _, _ = load_configuration(app_logger)
 
     assert len(parsers) == 1
     assert parsers[0]["name"] == "custom_parser"
+
+
+def test_load_configuration_cache_full(tmp_path, app_logger, monkeypatch):
+    """Tests that cache_dir and cache_max_size are read correctly."""
+    config_content = {
+        "cache": {
+            "cache_dir": "/tmp/custom_cache",
+            "cache_max_size": 1024
+        }
+    }
+    config_file = tmp_path / "config.yaml"
+    with open(config_file, "w") as f:
+        yaml.dump(config_content, f)
+
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
+    CACHE_DIR, CACHE_MAX_SIZE, _, _, _, _ = load_configuration(app_logger)
+
+    assert CACHE_DIR == "/tmp/custom_cache"
+    assert CACHE_MAX_SIZE == 1024
+
+
+def test_load_configuration_cache_only_dir(tmp_path, app_logger, monkeypatch):
+    """Tests that only cache_dir is read correctly."""
+    config_content = {
+        "cache": {
+            "cache_dir": "/tmp/other_cache"
+        }
+    }
+    config_file = tmp_path / "config.yaml"
+    with open(config_file, "w") as f:
+        yaml.dump(config_content, f)
+
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
+    CACHE_DIR, CACHE_MAX_SIZE, _, _, _, _ = load_configuration(app_logger)
+
+    assert CACHE_DIR == "/tmp/other_cache"
+    assert CACHE_MAX_SIZE is None
+
+
+def test_load_configuration_cache_only_size(tmp_path, app_logger, monkeypatch):
+    """Tests that only cache_max_size is read correctly."""
+    config_content = {
+        "cache": {
+            "cache_max_size": 512
+        }
+    }
+    config_file = tmp_path / "config.yaml"
+    with open(config_file, "w") as f:
+        yaml.dump(config_content, f)
+
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
+    CACHE_DIR, CACHE_MAX_SIZE, _, _, _, _ = load_configuration(app_logger)
+
+    assert CACHE_DIR == "./.cache"  # Default value
+    assert CACHE_MAX_SIZE == 512
+
+
+def test_load_configuration_cache_empty(tmp_path, app_logger, monkeypatch):
+    """Tests that an empty cache block results in default values."""
+    config_content = {
+        "cache": {}
+    }
+    config_file = tmp_path / "config.yaml"
+    with open(config_file, "w") as f:
+        yaml.dump(config_content, f)
+
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
+    CACHE_DIR, CACHE_MAX_SIZE, _, _, _, _ = load_configuration(app_logger)
+
+    assert CACHE_DIR == "./.cache"
+    assert CACHE_MAX_SIZE is None
+
+
+def test_load_configuration_no_cache(tmp_path, app_logger, monkeypatch):
+    """Tests that no cache block results in default values."""
+    config_content = {}
+    config_file = tmp_path / "config.yaml"
+    with open(config_file, "w") as f:
+        yaml.dump(config_content, f)
+
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
+    CACHE_DIR, CACHE_MAX_SIZE, _, _, _, _ = load_configuration(app_logger)
+
+    assert CACHE_DIR == "./.cache"
+    assert CACHE_MAX_SIZE is None

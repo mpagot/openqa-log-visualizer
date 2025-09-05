@@ -1,4 +1,6 @@
 config_ver: 1
+cache:
+  cache_dir: '.cache'
 max_jobs_to_explore: 10
 autoinst_parser:
   - name: SAPHanaSR
