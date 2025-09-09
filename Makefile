@@ -1,12 +1,6 @@
-.PHONY: help
-help:
-    @echo "Available commands:"
-    @grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
-
-
 .PHONY: test-frontend test-backend test
 
-test: test-backend test-frontend
+test: test-backend test-frontend ## Run all tests
 
 # ==============================================================================
 # Frontend Development
@@ -21,7 +15,7 @@ node_modules: package.json package-lock.json
 	touch node_modules
 
 # Run frontend unit tests
-test-frontend: node_modules
+test-frontend: node_modules ## Run frontend tests
 	npm test
 
 # ==============================================================================
@@ -30,5 +24,15 @@ test-frontend: node_modules
 # These targets require uv and all the required dependencies to be installed.
 # ==============================================================================
 
-test-backend:
+static-backend-ruff: ## Run ruff to check the code
+	/usr/bin/uv run ruff check app/
+
+static-backend-mypy:
+	/usr/bin/uv run mypy app/
+
+static-backend-mypy-strict:
+	/usr/bin/uv run mypy --strict --disallow-any-generics --disallow-untyped-defs --disallow-incomplete-defs --warn-unreachable --strict-equality app/
+
+test-backend: ## Run backend tests
 	uv run pytest -vv -o log_cli=true -o log_cli_level=10 tests/backend/
+
