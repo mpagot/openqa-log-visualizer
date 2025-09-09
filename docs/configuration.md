@@ -32,6 +32,16 @@ The `cache` block contains parameters for controlling the application's caching 
 
 This is a list of parser objects. The application iterates through this list and uses the **first** parser whose `match_name` regex matches the openQA job name. This allows you to define different parsing rules for different types of tests.
 
+The entire log processing and event pairing process starts with this section. It is the **Source of Truth** for defining what is important in the log files.
+
+The user defines a list of "parsers," and each parser contains a list of "channels." Each channel is a rule that defines what to look for in the log file and how to classify it. A channel consists of:
+*   A `pattern`: A regular expression to match a specific log line.
+*   A `type`: A category for the event (e.g., `mutex`, `barrier`, `module`).
+*   An `event_name`: A specific name for the matched event (e.g., `mutex_create`, `barrier_wait`).
+
+**Important:** Some features of the Merged Timeline, especially the event pairing and color-coding, will only work if the `channels` are defined with the specific `type` and `event_name` values that the application logic expects (e.g., `type: 'mutex'`, `event_name: 'mutex_lock'`).
+
+
 ### Parser Object
 
 Each object in the `autoinst_parser` list defines a distinct set of rules.
