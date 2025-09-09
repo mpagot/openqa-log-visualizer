@@ -1,0 +1,30 @@
+config_ver: 1
+max_jobs_to_explore: 10
+autoinst_parser:
+  - name: performance_test
+    match_name: |-
+      .*(?P<name>.*)
+    channels:
+      # A simple regex
+      - name: "module_start"
+        type: "module"
+        pattern: |-
+          starting (?P<module>\S+) tests/\S+\.pm
+
+      # A slightly more complex regex with a lookbehind
+      - name: "mutex_lock"
+        type: "mutex"
+        pattern: |-
+          mutex lock '(?:P<mutex>[^']+)'(?!.*unavailable)
+
+      # A regex for capturing errors
+      - name: "error_barrier_timeout"
+        type: "error"
+        pattern: |-
+          .*barrier '(?P<barrier>[^']+)' : timeout
+
+      # A regex for capturing state
+      - name: "state_paused_on_lock"
+        type: "waiting"
+        pattern: |-
+          .*testapi::record_info.*title="Paused(?P<duration>[\s\dms]*)", output="Wait for.*
