@@ -60,4 +60,3 @@ Can't call method "click" on an undefined value at /usr/lib/os-autoinst/consoles
     assert parsed_log[3]["timestamp"] == "2025-09-01T10:00:03.000Z"
     assert parsed_log[3]["event_name"] == "mutex_unlock"
     assert parsed_log[3]["mutex"] == "test_mutex"
-

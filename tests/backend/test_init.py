@@ -11,9 +11,11 @@ def test_load_configuration_success(tmp_path, app_logger, monkeypatch):
             {
                 "name": "test_parser",
                 "match_name": ".*(?P<name>test).*",
-                "channels": [{"name": "test_channel", "pattern": ".*hello.*", "type": "test"}],
+                "channels": [
+                    {"name": "test_channel", "pattern": ".*hello.*", "type": "test"}
+                ],
             }
-        ]
+        ],
     }
     config_file = tmp_path / "config.yaml"
     with open(config_file, "w") as f:
@@ -30,12 +32,11 @@ def test_load_configuration_success(tmp_path, app_logger, monkeypatch):
 
     assert max_jobs == 20
 
+
 def test_load_configuration_invalid_regex(tmp_path, app_logger, monkeypatch):
     """Tests that the application exits if an invalid regex is in the config."""
     config_content = {
-        "autoinst_parser": [
-            {"name": "bad_parser", "match_name": ".*[", "channels": []}
-        ]
+        "autoinst_parser": [{"name": "bad_parser", "match_name": ".*[", "channels": []}]
     }
     config_file = tmp_path / "config.yaml"
     with open(config_file, "w") as f:
@@ -47,14 +48,14 @@ def test_load_configuration_invalid_regex(tmp_path, app_logger, monkeypatch):
     assert e.value.code == 1
 
 
-def test_load_configuration_invalid_regex_no_named_group(tmp_path, app_logger, monkeypatch):
+def test_load_configuration_invalid_regex_no_named_group(
+    tmp_path, app_logger, monkeypatch
+):
     """Tests that the application exits if an invalid regex is in the config.
-       Here the regexp is invalid as it does not have a named group '(?P<name>...)'
+    Here the regexp is invalid as it does not have a named group '(?P<name>...)'
     """
     config_content = {
-        "autoinst_parser": [
-            {"name": "bad_parser", "match_name": ".*", "channels": []}
-        ]
+        "autoinst_parser": [{"name": "bad_parser", "match_name": ".*", "channels": []}]
     }
     config_file = tmp_path / "config.yaml"
     with open(config_file, "w") as f:
@@ -136,7 +137,11 @@ def test_load_configuration_from_env_variable(tmp_path, app_logger, monkeypatch)
     custom_config_dir.mkdir()
     custom_config_content = {
         "autoinst_parser": [
-            {"name": "custom_parser", "match_name": ".*(?P<name>custom).*", "channels": []}
+            {
+                "name": "custom_parser",
+                "match_name": ".*(?P<name>custom).*",
+                "channels": [],
+            }
         ]
     }
     custom_config_file = custom_config_dir / "my_config.yaml"
@@ -157,10 +162,7 @@ def test_load_configuration_from_env_variable(tmp_path, app_logger, monkeypatch)
 def test_load_configuration_cache_full(tmp_path, app_logger, monkeypatch):
     """Tests that cache_dir and cache_max_size are read correctly."""
     config_content = {
-        "cache": {
-            "cache_dir": "/tmp/custom_cache",
-            "cache_max_size": 1024
-        }
+        "cache": {"cache_dir": "/tmp/custom_cache", "cache_max_size": 1024}
     }
     config_file = tmp_path / "config.yaml"
     with open(config_file, "w") as f:
@@ -175,11 +177,7 @@ def test_load_configuration_cache_full(tmp_path, app_logger, monkeypatch):
 
 def test_load_configuration_cache_only_dir(tmp_path, app_logger, monkeypatch):
     """Tests that only cache_dir is read correctly."""
-    config_content = {
-        "cache": {
-            "cache_dir": "/tmp/other_cache"
-        }
-    }
+    config_content = {"cache": {"cache_dir": "/tmp/other_cache"}}
     config_file = tmp_path / "config.yaml"
     with open(config_file, "w") as f:
         yaml.dump(config_content, f)
@@ -193,11 +191,7 @@ def test_load_configuration_cache_only_dir(tmp_path, app_logger, monkeypatch):
 
 def test_load_configuration_cache_only_size(tmp_path, app_logger, monkeypatch):
     """Tests that only cache_max_size is read correctly."""
-    config_content = {
-        "cache": {
-            "cache_max_size": 512
-        }
-    }
+    config_content = {"cache": {"cache_max_size": 512}}
     config_file = tmp_path / "config.yaml"
     with open(config_file, "w") as f:
         yaml.dump(config_content, f)
@@ -211,9 +205,7 @@ def test_load_configuration_cache_only_size(tmp_path, app_logger, monkeypatch):
 
 def test_load_configuration_cache_empty(tmp_path, app_logger, monkeypatch):
     """Tests that an empty cache block results in default values."""
-    config_content = {
-        "cache": {}
-    }
+    config_content = {"cache": {}}
     config_file = tmp_path / "config.yaml"
     with open(config_file, "w") as f:
         yaml.dump(config_content, f)

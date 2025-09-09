@@ -5,6 +5,7 @@ from typing import Optional
 import re
 import requests
 import requests.exceptions
+import logging
 
 """Custom exception classes for the application."""
 
@@ -30,7 +31,7 @@ class OpenQAClientLogDownloadError(OpenQAClientError):
 class OpenQAClientWrapper:
     """A wrapper class for the openqa_client to simplify interactions."""
 
-    def __init__(self, base_url: str, app_logger) -> None:
+    def __init__(self, base_url: str, app_logger: logging.Logger) -> None:
         """
         Initializes the client wrapper.
 
@@ -40,9 +41,10 @@ class OpenQAClientWrapper:
         """
         self.app_logger = app_logger
         parsed_url = urlparse(base_url)
-        self.hostname = parsed_url.hostname
-        if not self.hostname:
+        hostname = parsed_url.hostname
+        if not hostname:
             raise ValueError("Invalid URL provided. Could not parse hostname.")
+        self.hostname = hostname
 
         # Extract job_id from the URL path
         match = re.search(r"/tests/(\d+)", parsed_url.path)
@@ -70,6 +72,7 @@ class OpenQAClientWrapper:
             )
             self._client = client
         return self._client
+
     def get_job_details(self, job_id: str) -> dict:
         """
         Fetches the details for a specific job.
@@ -93,7 +96,9 @@ class OpenQAClientWrapper:
                 )
             return job
         except RequestError as e:
-            error_message = f"API Error for job {job_id}: Status {e.status_code} - {e.text}"
+            error_message = (
+                f"API Error for job {job_id}: Status {e.status_code} - {e.text}"
+            )
             self.app_logger.error(error_message)
             raise OpenQAClientAPIError(error_message) from e
 

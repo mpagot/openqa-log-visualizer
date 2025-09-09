@@ -1,7 +1,14 @@
 import re
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import pytest
-from app.main import find_event_pairs, create_timeline_events, format_job_name
+from app.main import find_event_pairs, create_timeline_events, format_job_name, app
+
+
+@pytest.fixture
+def client():
+    app.config.update({"TESTING": True})
+    with app.test_client() as client:
+        yield client
 
 
 def test_format_job_name(monkeypatch):
@@ -13,7 +20,9 @@ def test_format_job_name(monkeypatch):
     mock_parsers = [
         {
             "name": "memoleilnomemio",
-            "match_name": re.compile(r".*(?P<name>folletto_?sonoio|\d?inumaforesta?_?\d+).*"),
+            "match_name": re.compile(
+                r".*(?P<name>folletto_?sonoio|\d?inumaforesta?_?\d+).*"
+            ),
         }
     ]
     monkeypatch.setattr("app.main.autoinst_log_parsers", mock_parsers)
@@ -28,12 +37,42 @@ def test_find_event_pairs_mutex_unmatched():
     mock_logger = MagicMock()
     """Tests the logic for finding create/unlock and unmatched events."""
     timeline_events = [
-        {"timestamp": "1", "mutex": "lock1", "event_name": "mutex_create", "type": "mutex"},
-        {"timestamp": "2", "mutex": "lock2", "event_name": "mutex_create", "type": "mutex"},
-        {"timestamp": "3", "mutex": "lock2", "event_name": "mutex_unlock", "type": "mutex"},
-        {"timestamp": "4", "mutex": "lock1", "event_name": "mutex_unlock", "type": "mutex"},
-        {"timestamp": "5", "mutex": "lock3", "event_name": "mutex_create", "type": "mutex"},
-        {"timestamp": "6", "mutex": "lock4", "event_name": "mutex_unlock", "type": "mutex"},
+        {
+            "timestamp": "1",
+            "mutex": "lock1",
+            "event_name": "mutex_create",
+            "type": "mutex",
+        },
+        {
+            "timestamp": "2",
+            "mutex": "lock2",
+            "event_name": "mutex_create",
+            "type": "mutex",
+        },
+        {
+            "timestamp": "3",
+            "mutex": "lock2",
+            "event_name": "mutex_unlock",
+            "type": "mutex",
+        },
+        {
+            "timestamp": "4",
+            "mutex": "lock1",
+            "event_name": "mutex_unlock",
+            "type": "mutex",
+        },
+        {
+            "timestamp": "5",
+            "mutex": "lock3",
+            "event_name": "mutex_create",
+            "type": "mutex",
+        },
+        {
+            "timestamp": "6",
+            "mutex": "lock4",
+            "event_name": "mutex_unlock",
+            "type": "mutex",
+        },
     ]
 
     all_pairs, count = find_event_pairs(timeline_events, mock_logger)
@@ -61,10 +100,30 @@ def test_find_event_pairs_mutex_create_one_to_many():
     Tests that multiple unlock events are paired with the single most recent create event.
     """
     timeline_events = [
-        {"timestamp": "1", "mutex": "lock1", "event_name": "mutex_create", "type": "mutex"},
-        {"timestamp": "2", "mutex": "lock1", "event_name": "mutex_create", "type": "mutex"},
-        {"timestamp": "3", "mutex": "lock1", "event_name": "mutex_unlock", "type": "mutex"},
-        {"timestamp": "4", "mutex": "lock1", "event_name": "mutex_unlock", "type": "mutex"},
+        {
+            "timestamp": "1",
+            "mutex": "lock1",
+            "event_name": "mutex_create",
+            "type": "mutex",
+        },
+        {
+            "timestamp": "2",
+            "mutex": "lock1",
+            "event_name": "mutex_create",
+            "type": "mutex",
+        },
+        {
+            "timestamp": "3",
+            "mutex": "lock1",
+            "event_name": "mutex_unlock",
+            "type": "mutex",
+        },
+        {
+            "timestamp": "4",
+            "mutex": "lock1",
+            "event_name": "mutex_unlock",
+            "type": "mutex",
+        },
     ]
     all_pairs, _ = find_event_pairs(timeline_events, mock_logger)
     # Should find 2 create/unlock pairs and 0 lock/unlock pairs
@@ -80,10 +139,30 @@ def test_find_event_pairs_mutex_lock_nested():
     mock_logger = MagicMock()
     """Tests correct pairing of nested lock/unlock events."""
     timeline_events = [
-        {"timestamp": "1", "mutex": "lock1", "event_name": "mutex_lock", "type": "mutex"},
-        {"timestamp": "2", "mutex": "lock1", "event_name": "mutex_lock", "type": "mutex"},
-        {"timestamp": "3", "mutex": "lock1", "event_name": "mutex_unlock", "type": "mutex"},
-        {"timestamp": "4", "mutex": "lock1", "event_name": "mutex_unlock", "type": "mutex"},
+        {
+            "timestamp": "1",
+            "mutex": "lock1",
+            "event_name": "mutex_lock",
+            "type": "mutex",
+        },
+        {
+            "timestamp": "2",
+            "mutex": "lock1",
+            "event_name": "mutex_lock",
+            "type": "mutex",
+        },
+        {
+            "timestamp": "3",
+            "mutex": "lock1",
+            "event_name": "mutex_unlock",
+            "type": "mutex",
+        },
+        {
+            "timestamp": "4",
+            "mutex": "lock1",
+            "event_name": "mutex_unlock",
+            "type": "mutex",
+        },
     ]
     all_pairs, _ = find_event_pairs(timeline_events, mock_logger)
     # Should find 0 create/unlock pairs and 2 lock/unlock pairs
@@ -102,9 +181,24 @@ def test_find_event_pairs_barrier_one_to_many():
     mock_logger = MagicMock()
     """Tests that multiple barrier_wait events are paired with one barrier_create."""
     timeline_events = [
-        {"timestamp": "1", "barrier": "b1", "event_name": "barrier_create", "type": "barrier"},
-        {"timestamp": "2", "barrier": "b1", "event_name": "barrier_wait", "type": "barrier"},
-        {"timestamp": "3", "barrier": "b1", "event_name": "barrier_wait", "type": "barrier"},
+        {
+            "timestamp": "1",
+            "barrier": "b1",
+            "event_name": "barrier_create",
+            "type": "barrier",
+        },
+        {
+            "timestamp": "2",
+            "barrier": "b1",
+            "event_name": "barrier_wait",
+            "type": "barrier",
+        },
+        {
+            "timestamp": "3",
+            "barrier": "b1",
+            "event_name": "barrier_wait",
+            "type": "barrier",
+        },
     ]
     all_pairs, count = find_event_pairs(timeline_events, mock_logger)
 
@@ -128,13 +222,22 @@ def test_find_event_pairs_ignores_events_without_name():
     """Tests that events without a mutex/barrier name are ignored."""
     mock_logger = MagicMock()
     timeline_events = [
-        {"timestamp": "1", "event_name": "mutex_create", "type": "mutex"},  # No mutex name
-        {"timestamp": "2", "event_name": "barrier_create", "type": "barrier"}, # No barrier name
+        {
+            "timestamp": "1",
+            "event_name": "mutex_create",
+            "type": "mutex",
+        },  # No mutex name
+        {
+            "timestamp": "2",
+            "event_name": "barrier_create",
+            "type": "barrier",
+        },  # No barrier name
     ]
     all_pairs, count = find_event_pairs(timeline_events, mock_logger)
 
     assert len(all_pairs) == 0
     assert count == 0
+
 
 def test_create_timeline_events():
     """Tests the creation and sorting of the main timeline."""
@@ -170,3 +273,46 @@ def test_create_timeline_events():
     assert timeline[1]["log_index"] == 0
     assert timeline[2]["job_id"] == "job1"
     assert timeline[2]["log_index"] == 0
+
+
+def test_analyze_cache_write(client):
+    """
+    Tests that cache.write_data is called on a cache miss for the log file.
+    """
+    mock_job_details = {
+        "id": "1",
+        "name": "fake_job",
+        "state": "done",
+        "children": {},
+        "parents": {},
+    }
+    mock_log_content = "some log content"
+
+    with patch("app.main.OpenQAClientWrapper") as MockClient:
+        mock_client_instance = MockClient.return_value
+        mock_client_instance.get_job_details.return_value = mock_job_details
+        mock_client_instance.get_log_content.return_value = mock_log_content
+        mock_client_instance.hostname = "fake_host"
+        mock_client_instance.job_id = "1"
+        mock_client_instance.get_job_url.return_value = "http://fake/t1"
+
+        with patch("app.main.openQACache") as MockCache:
+            mock_cache_instance = MockCache.return_value
+            # Simulate a cache miss for both job data and log content
+            mock_cache_instance.hit.return_value = False
+            mock_cache_instance.get_data.return_value = None
+            mock_cache_instance.get_log_content.return_value = (None, False)
+
+            # Make the call to the endpoint
+            response = client.post("/analyze", json={"log_url": "http://fake/tests/1"})
+
+            # Assertions
+            assert response.status_code == 200
+            # Check that get_job_details was called
+            mock_client_instance.get_job_details.assert_called_once_with("1")
+            # Check that get_log_content was called because of the cache miss
+            mock_client_instance.get_log_content.assert_called_once_with("1", "autoinst-log.txt")
+            # The main assertion: check that write_data was called correctly
+            mock_cache_instance.write_data.assert_called_once_with(
+                "1", mock_job_details, mock_log_content
+            )

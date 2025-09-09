@@ -24,8 +24,8 @@ def _create_exception_timestamp(timestamp_str: str | None) -> str | None:
 def parse_autoinst_log(
     log_content: str,
     patterns: List[Dict[str, Any]],
-    timestamp_re: Pattern,
-    perl_exception_re: Pattern,
+    timestamp_re: Pattern[str],
+    perl_exception_re: Pattern[str],
 ) -> Tuple[List[Dict[str, Any]], List[str], int, int]:
     """
     Parses the content of an autoinst-log.txt file to extract only the lines

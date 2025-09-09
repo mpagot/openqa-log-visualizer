@@ -9,7 +9,6 @@ from openqa_client.exceptions import RequestError
 import requests
 
 
-
 @pytest.fixture
 def mock_openqa_client():
     """Fixture to mock the OpenQA_Client."""
@@ -88,7 +87,9 @@ def test_get_job_details_no_job_key(mock_openqa_client, app_logger):
 
 def test_get_job_details_api_error(mock_openqa_client, app_logger):
     """Tests handling of API errors when fetching job details."""
-    mock_error = RequestError("GET", "https://openqa.suse.de/api/v1/jobs/123", 500, "Internal Server Error")
+    mock_error = RequestError(
+        "GET", "https://openqa.suse.de/api/v1/jobs/123", 500, "Internal Server Error"
+    )
     mock_openqa_client.openqa_request.side_effect = mock_error
     wrapper = OpenQAClientWrapper("https://openqa.suse.de/tests/123", app_logger)
     with pytest.raises(

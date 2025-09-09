@@ -1,5 +1,5 @@
 from flask import Flask, jsonify, render_template, request
-from urllib.parse import urlparse
+from typing import Any, Dict, List, Optional, Tuple
 
 import logging
 import time
@@ -7,6 +7,7 @@ import json
 import os
 from . import load_configuration
 from .autoinst_parser import parse_autoinst_log
+from .cache import openQACache
 from .client import (
     OpenQAClientWrapper,
     OpenQAClientError,
@@ -14,33 +15,16 @@ from .client import (
     OpenQAClientLogDownloadError,
 )
 
-
 app = Flask(__name__)
-
-
-
 (
-    CACHE_DIR, CACHE_MAX_SIZE,
+    CACHE_DIR,
+    CACHE_MAX_SIZE,
     autoinst_log_parsers,
     timestamp_re,
     perl_exception_re,
     MAX_JOBS_TO_EXPLORE,
 ) = load_configuration(app.logger)
 
-
-def get_dir_size(path='.'):
-    """Calculates the total size of a directory in bytes."""
-    total = 0
-    try:
-        with os.scandir(path) as it:
-            for entry in it:
-                if entry.is_file():
-                    total += entry.stat().st_size
-                elif entry.is_dir():
-                    total += get_dir_size(entry.path)
-    except FileNotFoundError:
-        return 0 # Directory does not exist yet
-    return total
 
 def format_job_name(full_name: str) -> str:
     """
@@ -51,6 +35,8 @@ def format_job_name(full_name: str) -> str:
     based on a regular expression defined in the config.yaml file.
     The key is that the regex must contain a named group (?P<name>...)
     to specify which part of the string to extract.
+    Calculated value is added to job_details["short_name"] and used as title
+    of each job box: `title.append(` - ${jobDetails.short_name}`)`
 
     Args:
         full_name: The full job name to be parsed.
@@ -77,7 +63,9 @@ def format_job_name(full_name: str) -> str:
     return full_name
 
 
-def find_event_pairs(timeline_events: list, app_logger) -> tuple[list, int]:
+def find_event_pairs(
+    timeline_events: list, app_logger: logging.Logger
+) -> tuple[list, int]:
     """
     Finds pairs of synchronization events (mutexes and barriers) for visualization.
 
@@ -86,13 +74,21 @@ def find_event_pairs(timeline_events: list, app_logger) -> tuple[list, int]:
     2. Mutex 'lock' to 'unlock': For visualizing critical sections.
     3. Barrier 'create' to 'wait': For visualizing multi-job synchronization points.
 
+    The main constraints in the config.yaml are that each channel must have a name and a valid pattern, and the type must be one that the frontend and pairing logic are prepared to handle
+    (e.g., mutex, barrier, module).
+
+    This function sits at the end of the chain and is highly dependent on the output of parse_autoinst_log. It receives the list of
+    timeline events and uses the type and event_name fields to identify synchronization events. For example, its logic explicitly checks if event_type == "mutex" and if
+    event_name == "mutex_lock". If the channels in config.yaml are not defined correctly, or if parse_autoinst_log fails to tag the events properly, find_event_pairs
+    will not be able to find any pairs.
+
     Args:
         timeline_events: A list of all timeline event dictionaries.
         app_logger: The Flask app's logger for logging messages.
 
     Returns:
         - A list of all found event pairs.
-        - An integer count of the number of synchronization events processed.
+        - An integer count of the number of synchronization events processed (performance).
     """
     all_pairs = []
     event_count = 0
@@ -112,9 +108,7 @@ def find_event_pairs(timeline_events: list, app_logger) -> tuple[list, int]:
         if event_type == "mutex":
             mutex_name = event.get("mutex")
             if not mutex_name:
-                app_logger.debug(
-                    f"Ignoring mutex: {event}"
-                )
+                app_logger.debug(f"Ignoring mutex: {event}")
                 continue
             event_count += 1
 
@@ -151,9 +145,7 @@ def find_event_pairs(timeline_events: list, app_logger) -> tuple[list, int]:
         elif event_type == "barrier":
             barrier_name = event.get("barrier")
             if not barrier_name:
-                app_logger.debug(
-                    f"Ignoring barrier: {event}"
-                )
+                app_logger.debug(f"Ignoring barrier: {event}")
                 continue
             event_count += 1
 
@@ -206,25 +198,33 @@ def create_timeline_events(all_job_details: dict) -> list:
     return timeline_events
 
 
-def _discover_jobs(client, initial_job_id, ignore_cache, debug_log, max_jobs):
-    """Discover all related jobs starting from an initial job ID."""
+def discover_jobs(
+    client: OpenQAClientWrapper,
+    cache: openQACache,
+    initial_job_id: str,
+    ignore_cache: bool,
+    debug_log: list,
+    max_jobs: int,
+) -> tuple[dict, dict]:
+    """Discover all related jobs starting from an initial job ID.
+
+    Args:
+        client: An instance of OpenQAClientWrapper.
+        cache: An instance of the openQACache.
+        initial_job_id: The ID of the job to start discovery from.
+        ignore_cache: A boolean indicating whether to ignore the cache.
+        debug_log: A list to which debug messages will be appended.
+        max_jobs: The maximum number of jobs to explore.
+
+    Returns:
+        A tuple containing a dictionary of all job details and a dictionary of performance metrics.
+    """
     all_job_details = {}
     jobs_to_fetch = [initial_job_id]
-    fetched_jobs = set()
+    # This set is crucial for tracking visited jobs to prevent re-fetching and
+    # to avoid getting stuck in circular dependencies (e.g., parent -> child -> parent).
+    fetched_jobs: set[str] = set()
     performance_metrics = {"api_calls": [], "cache_hits": 0}
-
-    cache_size_start_time = time.perf_counter()
-    try:
-        cache_size_bytes = get_dir_size(CACHE_DIR)
-        app.logger.info(f"Initial cache size: {cache_size_bytes / 1024 / 1024:.2f} MB")
-    except Exception as e:
-        app.logger.error(f"Failed to calculate cache size: {e}")
-        cache_size_bytes = -1
-    cache_size_duration = time.perf_counter() - cache_size_start_time
-    performance_metrics['cache_size_calc_duration'] = cache_size_duration
-    performance_metrics['initial_cache_size_bytes'] = cache_size_bytes
-
-    cache_host_dir = os.path.join(CACHE_DIR, client.hostname)
 
     discovery_loop_start = time.perf_counter()
     while jobs_to_fetch and len(fetched_jobs) < max_jobs:
@@ -233,26 +233,19 @@ def _discover_jobs(client, initial_job_id, ignore_cache, debug_log, max_jobs):
             app.logger.debug(f"Skipping already fetched job {current_job_id}.")
             continue
         fetched_jobs.add(current_job_id)
-    
-        cache_file_path = os.path.join(cache_host_dir, f"{current_job_id}.json")
         job_details = None
 
-        if not ignore_cache and os.path.exists(cache_file_path):
+        if not ignore_cache and cache.hit(current_job_id):
             debug_log.append(
                 {"level": "info", "message": f"Cache hit for job {current_job_id}."}
             )
             app.logger.info(f"Cache hit for job {current_job_id}.")
             performance_metrics["cache_hits"] += 1
-            with open(cache_file_path, "r") as f:
-                cached_data = json.load(f)
-                job_details = cached_data.get("job_details")
-                if job_details:
-                    job_details["is_cached"] = True
-                else:
-                    app.logger.info("Missing job_details in cached_data:{cached_data}")
+            job_details = cache.get_data(current_job_id)
         else:
-            app.logger.info(f"Cache miss for job {current_job_id} cache_file_path:{cache_file_path} and ignore_cache:{ignore_cache}.")
-
+            app.logger.info(
+                f"Cache miss for job {current_job_id} and ignore_cache:{ignore_cache}."
+            )
 
         if not job_details:
             debug_log.append(
@@ -266,7 +259,10 @@ def _discover_jobs(client, initial_job_id, ignore_cache, debug_log, max_jobs):
                 job_details = client.get_job_details(current_job_id)
                 api_call_end = time.perf_counter()
                 performance_metrics["api_calls"].append(
-                    {"job_id": current_job_id, "duration": api_call_end - api_call_start}
+                    {
+                        "job_id": current_job_id,
+                        "duration": api_call_end - api_call_start,
+                    }
                 )
             except OpenQAClientAPIError as e:
                 error_message = str(e)
@@ -279,6 +275,13 @@ def _discover_jobs(client, initial_job_id, ignore_cache, debug_log, max_jobs):
             job_details["job_url"] = client.get_job_url(current_job_id)
             all_job_details[current_job_id] = job_details
 
+            # This is the core of the job discovery mechanism.
+            # For the current job, it inspects both its 'children' and 'parents' relationships
+            # to find other jobs running in parallel.
+            # This build a dependency tree of a multi-machine test scenario.
+            # By adding the IDs of these related jobs to the 'jobs_to_fetch' queue,
+            # the `discover_jobs` function recursively explores the entire test
+            # cluster, ensuring that the final analysis includes all relevant jobs.
             for relation in ["children", "parents"]:
                 parallel_jobs = job_details.get(relation, {}).get("Parallel", [])
                 if parallel_jobs:
@@ -293,8 +296,29 @@ def _discover_jobs(client, initial_job_id, ignore_cache, debug_log, max_jobs):
     return all_job_details, performance_metrics
 
 
-def _process_job_logs(client, all_job_details, debug_log):
-    """Fetch and parse logs for all discovered jobs."""
+def process_job_logs(
+    client: OpenQAClientWrapper,
+    cache: openQACache,
+    all_job_details: Dict[str, Any],
+    debug_log: List[Dict[str, Any]],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Fetch and parse logs for all discovered jobs.
+
+    This function iterates through the discovered jobs, downloads the logs for
+    jobs that are 'done', and then parses them. It uses the cache to avoid
+    re-downloading logs.
+
+    Args:
+        client: An instance of OpenQAClientWrapper.
+        cache: An instance of the openQACache.
+        all_job_details: A dictionary containing the details of all discovered jobs.
+        debug_log: A list to which debug messages will be appended.
+
+    Returns:
+        A tuple containing:
+        - The updated dictionary of all job details (now including log data).
+        - A dictionary of performance metrics for the log processing phase.
+    """
     performance_metrics = {"log_downloads": [], "log_parsing": [], "cache_hits": 0}
     log_processing_start = time.perf_counter()
 
@@ -305,17 +329,21 @@ def _process_job_logs(client, all_job_details, debug_log):
             )
             continue
 
-        log_content, was_cached = _get_log_from_cache(client.hostname, job_id_key)
+        log_content, was_cached = cache.get_log_content(job_id_key)
         if was_cached:
             performance_metrics["cache_hits"] += 1
 
         if not log_content:
-            log_content, perf = _get_log_from_api(client, job_id_key, job_details, debug_log)
+            log_content, perf = _get_log_from_api(
+                client, job_id_key, job_details, debug_log, cache
+            )
             if perf:
                 performance_metrics["log_downloads"].append(perf)
 
         if log_content:
-            _parse_log_content(job_details, log_content, job_id_key, performance_metrics)
+            _parse_log_content(
+                job_details, log_content, job_id_key, performance_metrics
+            )
         else:
             # This case is hit if log download failed and error was already logged.
             pass
@@ -344,16 +372,15 @@ def analyze():
     job_id = "unknown"
     hostname = None
     debug_log = []
-    performance_metrics = {
-        "total_duration": 0,
-        "cache_hits": 0
-    }
+    performance_metrics = {"total_duration": 0, "cache_hits": 0}
     try:
         request_start_time = time.perf_counter()
         app.logger.info(f"Received analysis request for URL: {log_url}")
 
         try:
-            app.logger.debug(f"Create instance of OpenQAClientWrapper for URL: {log_url}")
+            app.logger.debug(
+                f"Create instance of OpenQAClientWrapper for URL: {log_url}"
+            )
             client = OpenQAClientWrapper(log_url, app.logger)
             hostname = client.hostname
             job_id = client.job_id
@@ -363,15 +390,17 @@ def analyze():
             app.logger.error(error_msg)
             return jsonify({"error": error_msg, "debug_log": debug_log}), 400
 
+        cache = openQACache(CACHE_DIR, hostname, CACHE_MAX_SIZE, app.logger)
+
         # 1. Discover all related jobs
-        all_job_details, perf_discovery = _discover_jobs(
-            client, job_id, ignore_cache, debug_log, MAX_JOBS_TO_EXPLORE
+        all_job_details, perf_discovery = discover_jobs(
+            client, cache, job_id, ignore_cache, debug_log, MAX_JOBS_TO_EXPLORE
         )
         performance_metrics.update(perf_discovery)
 
         # 2. Process logs for all discovered jobs
-        all_job_details, perf_logs = _process_job_logs(
-            client, all_job_details, debug_log
+        all_job_details, perf_logs = process_job_logs(
+            client, cache, all_job_details, debug_log
         )
         # Manually aggregate cache_hits from the two separate counters
         performance_metrics["cache_hits"] += perf_logs.pop("cache_hits", 0)
@@ -437,9 +466,20 @@ def analyze():
         return jsonify({"error": error_message, "debug_log": debug_log}), 500
 
 
-def _get_log_from_cache(hostname, job_id_key):
-    """Attempt to retrieve log content from the cache."""
-    cache_file_path = os.path.join(os.path.join(CACHE_DIR, hostname), f"{job_id_key}.json")
+def _get_log_from_cache(hostname: str, job_id_key: str) -> Tuple[Optional[str], bool]:
+    """Attempt to retrieve log content from the cache.
+
+    Args:
+        hostname: The hostname of the openQA server.
+        job_id_key: The ID of the job.
+
+    Returns:
+        A tuple containing the log content (str or None) and a boolean
+        indicating if the cache was hit.
+    """
+    cache_file_path = os.path.join(
+        os.path.join(CACHE_DIR, hostname), f"{job_id_key}.json"
+    )
     if os.path.exists(cache_file_path):
         with open(cache_file_path, "r") as f:
             cached_data = json.load(f)
@@ -449,8 +489,26 @@ def _get_log_from_cache(hostname, job_id_key):
     return None, False  # Return no content and no cache hit
 
 
-def _get_log_from_api(client, job_id_key, job_details, debug_log):
-    """Download log content from the API and cache it."""
+def _get_log_from_api(
+    client: OpenQAClientWrapper,
+    job_id_key: str,
+    job_details: Dict[str, Any],
+    debug_log: List[Dict[str, Any]],
+    cache: openQACache,
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """Download log content from the API and cache it.
+
+    Args:
+        client: An instance of OpenQAClientWrapper.
+        job_id_key: The ID of the job.
+        job_details: The dictionary with job details.
+        debug_log: A list to which debug messages will be appended.
+        cache: An instance of the openQACache.
+
+    Returns:
+        A tuple containing the log content (str) and performance metrics (dict),
+        or (None, None) if an error occurs.
+    """
     try:
         log_download_start = time.perf_counter()
         log_content = client.get_log_content(job_id_key, "autoinst-log.txt")
@@ -462,11 +520,7 @@ def _get_log_from_api(client, job_id_key, job_details, debug_log):
         }
 
         # Save the newly downloaded log to cache
-        os.makedirs(os.path.join(CACHE_DIR, client.hostname), exist_ok=True)
-        with open(
-            os.path.join(CACHE_DIR, client.hostname, f"{job_id_key}.json"), "w"
-        ) as f:
-            json.dump({"job_details": job_details, "log_content": log_content}, f)
+        cache.write_data(job_id_key, job_details, log_content)
         debug_log.append(
             {"level": "info", "message": f"Cached data for job {job_id_key}."}
         )
@@ -478,8 +532,20 @@ def _get_log_from_api(client, job_id_key, job_details, debug_log):
         return None, None
 
 
-def _parse_log_content(job_details, log_content, job_id_key, performance_metrics):
-    """Parse the log content using the appropriate parser from the config."""
+def _parse_log_content(
+    job_details: Dict[str, Any],
+    log_content: str,
+    job_id_key: str,
+    performance_metrics: Dict[str, Any],
+) -> None:
+    """Parse the log content using the appropriate parser from the config.
+
+    Args:
+        job_details: The dictionary with job details.
+        log_content: The content of the log file.
+        job_id_key: The ID of the job.
+        performance_metrics: The dictionary to store performance metrics.
+    """
     parser_to_use = None
     for parser in autoinst_log_parsers:
         match_name_re = parser.get("match_name")
@@ -511,7 +577,9 @@ def _parse_log_content(job_details, log_content, job_id_key, performance_metrics
         )
         job_details["parser_name"] = parser_to_use["name"]
     else:
-        app.logger.info(f"No matching parser found for job '{job_details.get('name', '')}'")
+        app.logger.info(
+            f"No matching parser found for job '{job_details.get('name', '')}'"
+        )
         job_details["parser_name"] = "N/A"
 
 

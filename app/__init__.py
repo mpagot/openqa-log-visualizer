@@ -3,10 +3,10 @@ import sys
 import yaml
 import re
 import logging
-from typing import Tuple, List, Dict, Any, Pattern
+from typing import Any, Dict, List, Optional, Pattern, Tuple
 
 
-def load_configuration(app_logger: logging.Logger) -> tuple:
+def load_configuration(app_logger: logging.Logger) -> Tuple[str, Optional[int], List[Dict[str, Any]], Pattern[str], Pattern[str], int]:
     """
     Loads configuration from YAML file, pre-compiles regexes, and returns
     key configuration variables.
@@ -17,7 +17,7 @@ def load_configuration(app_logger: logging.Logger) -> tuple:
     Returns:
         A tuple containing:
         - CACHE_DIR: The path to the cache directory.
-        - CACHE_MAX_SIZE: The path to the cache directory.
+        - CACHE_MAX_SIZE: The max size allowed for the cache folder..
         - autoinst_log_parsers: The list of parser configurations with compiled regexes.
         - timestamp_re: Compiled regex for parsing timestamps.
         - perl_exception_re: Compiled regex for parsing Perl exceptions.
@@ -50,23 +50,24 @@ def load_configuration(app_logger: logging.Logger) -> tuple:
         for k in ["name", "match_name"]:
             parser_def[k] = parser.get(k)
             if not parser_def[k]:
-                app_logger.error(f"Invalid configuration in {CONFIG_FILE}: parser '{parser}' is missing its '{k}' field.")
+                app_logger.error(
+                    f"Invalid configuration in {CONFIG_FILE}: parser '{parser}' is missing its '{k}' field."
+                )
                 sys.exit(1)
-
 
         try:
             parser["match_name"] = re.compile(parser_def["match_name"])
             if "name" not in parser["match_name"].groupindex:
                 app_logger.error(
-                        f"Invalid 'match_name' regular expression '{parser_def["match_name"]}' in {CONFIG_FILE} for parser '{parser_def["name"]}': "
-                        "missing named group '(?P<name>...)'. This is required for short job name display."
-                    )
+                    f"Invalid 'match_name' regular expression '{parser_def['match_name']}' in {CONFIG_FILE} for parser '{parser_def['name']}': "
+                    "missing named group '(?P<name>...)'. This is required for short job name display."
+                )
                 sys.exit(1)
 
         except re.error as e:
             app_logger.error(
-                    f"Invalid 'match_name' regular expression '{parser_def["match_name"]}' in {CONFIG_FILE} for parser '{parser_def["name"]}': {e}"
-                )
+                f"Invalid 'match_name' regular expression '{parser_def['match_name']}' in {CONFIG_FILE} for parser '{parser_def['name']}': {e}"
+            )
             sys.exit(1)
 
         for channel in parser.get("channels", []):
@@ -74,13 +75,15 @@ def load_configuration(app_logger: logging.Logger) -> tuple:
             for k in ["name", "pattern"]:
                 channel_def[k] = channel.get(k)
                 if not channel_def[k]:
-                    app_logger.error(f"Invalid configuration in {CONFIG_FILE}: channel '{channel}' is missing its '{k}' field.")
+                    app_logger.error(
+                        f"Invalid configuration in {CONFIG_FILE}: channel '{channel}' is missing its '{k}' field."
+                    )
                     sys.exit(1)
             try:
                 channel["pattern"] = re.compile(channel_def["pattern"])
             except re.error as e:
                 app_logger.error(
-                    f"Invalid regular expression '{channel_def["pattern"]}' in {CONFIG_FILE} for parser '{parser_def['name']}' channel '{channel_def['name']}': {e}"
+                    f"Invalid regular expression '{channel_def['pattern']}' in {CONFIG_FILE} for parser '{parser_def['name']}' channel '{channel_def['name']}': {e}"
                 )
 
                 sys.exit(1)
@@ -89,7 +92,8 @@ def load_configuration(app_logger: logging.Logger) -> tuple:
     perl_exception_re = re.compile(r" at .*?\.pm line \d+")
 
     return (
-        CACHE_DIR, CACHE_MAX_SIZE,
+        CACHE_DIR,
+        CACHE_MAX_SIZE,
         autoinst_log_parsers,
         timestamp_re,
         perl_exception_re,
