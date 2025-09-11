@@ -166,6 +166,7 @@ describe('renderer', () => {
 
             // Check exception link
             const exceptionCell = rows[1].querySelector('.col-message');
+            expect(exceptionCell).not.toBeNull();
             const link = exceptionCell.querySelector('a');
             expect(link).not.toBeNull();
             expect(link.href).toContain('#exception-row-12345-0');

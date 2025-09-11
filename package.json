@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "A web-based tool to analyze and visualize logs from multiple, related openQA jobs.",
   "scripts": {
-    "test": "vitest"
+    "test": "vitest run"
   },
   "devDependencies": {
     "jsdom": "^24.1.0",

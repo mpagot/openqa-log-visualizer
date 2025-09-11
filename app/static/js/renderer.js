@@ -99,10 +99,11 @@ function _createCollapsibleSection(title, data, jobId) {
                 const cell = row.insertCell();
                 const cellValue = logEntry[col.key] || '';
                 let cellText = cellValue;
+                let isHandled = false;
 
                 // For exceptions, show only the first significant line in the table.
                 if (col.key === 'message' && logEntry.type === 'exception') {
-                    const match = cellText.match(/.* at .*?\.pm line \d+\.?/);
+                    const match = cellText.match(/.* at .*?\.pm line \d+\.?\);/);
                     if (match) {
                         cellText = match[0];
                     } else {
@@ -115,10 +116,13 @@ function _createCollapsibleSection(title, data, jobId) {
                         link.href = `#exception-row-${jobId}-${exceptionIndex}`;
                         link.textContent = cellText;
                         cell.appendChild(link);
-                       return; // Skip default textContent assignment
+                        isHandled = true;
                     }
                 }
-                cell.textContent = cellText;
+
+                if (!isHandled) {
+                    cell.textContent = cellText;
+                }
                 cell.className = col.class;
             });
         });
@@ -272,7 +276,7 @@ export function renderJobDetails(jobsData, container) {
         // Separate specific fields to be collapsible
         const autoinstLog = jobDetails['autoinst-log'];
         const settings = jobDetails['settings'];
-        const exceptions = [];
+        let exceptions = jobDetails.exceptions || [];
 
         // Create a copy of jobDetails to show the rest
         const otherDetails = { ...jobDetails };
@@ -281,16 +285,18 @@ export function renderJobDetails(jobsData, container) {
         delete otherDetails['result'];
         delete otherDetails['reason'];
         delete otherDetails['state'];
+        delete otherDetails['exceptions'];
+
 
         // Collect full exception messages and their original index
-        if (autoinstLog && Array.isArray(autoinstLog)) {
+        if (exceptions.length === 0 && autoinstLog && Array.isArray(autoinstLog)) {
             autoinstLog.forEach((entry, index) => {
                 if (entry.type === 'exception') {
                     exceptions.push({ message: entry.message, log_index: index });
                 }
             });
+            jobDetails.exceptions = exceptions;
         }
-        jobDetails.exceptions = exceptions;
 
         if (settings) {
             jobDiv.appendChild(_createCollapsibleSection('Settings', settings));
