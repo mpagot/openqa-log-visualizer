@@ -3,9 +3,12 @@
   "version": "0.1.0",
   "description": "A web-based tool to analyze and visualize logs from multiple, related openQA jobs.",
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^24.3.1",
     "jsdom": "^24.1.0",
     "vitest": "^1.6.0"
   }
