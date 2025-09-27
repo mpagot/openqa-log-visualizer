@@ -15,9 +15,15 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "black>=25.1.0",
     "mypy>=1.17.1",
     "pytest>=8.4.1",
     "ruff>=0.12.12",
     "types-pyyaml>=6.0.12.20250822",
     "types-requests>=2.32.4.20250809",
+]
+
+[tool.uv.workspace]
+members = [
+    "tests/e2e/performance",
 ]
