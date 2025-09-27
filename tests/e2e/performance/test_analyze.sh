@@ -9,6 +9,20 @@ set -eou pipefail
 # -x: Print every command before executing it.
 #set -x
 
+# --- Functions ---
+
+function display_help() {
+    echo "Usage: $0 -c <config_filename> -l <logs_dirname> [--run-sample <number>]"
+    echo
+    echo "A simple e2e performance test for the /analyze endpoint."
+    echo
+    echo "   -c, --config      Specify the configuration file to use (e.g., config.performance.yaml)."
+    echo "   -l, --logs        Specify the directory of logs to use (e.g., 1, 2)."
+    echo "   --run-sample    The number of times to run the test (default: 1)."
+    echo "   -h, --help        Display this help message."
+    echo
+}
+
 # --- Argument Parsing ---
 CONFIG_FILENAME=""
 LOGS_DIRNAME=""
@@ -17,6 +31,10 @@ RUN_SAMPLES=1 # Default value
 while [[ $# -gt 0 ]]; do
   key="$1"
   case $key in
+    -h|--help)
+      display_help
+      exit 0
+      ;;
     -c)
       CONFIG_FILENAME="$2"
       shift 2
@@ -100,7 +118,7 @@ CURL_METRICS_JSON="${OUTPUT_DIR}/curl_metrics.json"
 SERVER_LOG_FILE="${OUTPUT_DIR}/server.log"
 OS_METRICS_CSV="${OUTPUT_DIR}/os_metrics.csv"
 
-# --- Functions ---
+# Starts the server, performs a health check, and returns the PID.
 
 # Starts the server, performs a health check, and returns the PID.
 # Exits the script if the server fails to start.
