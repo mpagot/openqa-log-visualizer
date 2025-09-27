@@ -1,11 +1,12 @@
-from openqa_client.client import OpenQA_Client
-from openqa_client.exceptions import RequestError
-from urllib.parse import urlparse
-from typing import Optional
+import logging
 import re
+from typing import Any, Optional
+from urllib.parse import urlparse
+
 import requests
 import requests.exceptions
-import logging
+from openqa_client.client import OpenQA_Client
+from openqa_client.exceptions import RequestError
 
 """Custom exception classes for the application."""
 
@@ -73,7 +74,7 @@ class OpenQAClientWrapper:
             self._client = client
         return self._client
 
-    def get_job_details(self, job_id: str) -> dict:
+    def get_job_details(self, job_id: str) -> dict[str, Any]:
         """
         Fetches the details for a specific job.
 
@@ -123,6 +124,32 @@ class OpenQAClientWrapper:
             return log_response.text
         except requests.exceptions.RequestException as e:
             error_message = f"Failed to download log {filename} for job {job_id}: {e}"
+            self.app_logger.error(error_message)
+            raise OpenQAClientLogDownloadError(error_message) from e
+
+    def download_log_to_file(
+        self, job_id: str, filename: str, destination_path: str
+    ) -> None:
+        """
+        Downloads a log file and streams it directly to a file.
+
+        Args:
+            job_id: The ID of the job.
+            filename: The name of the log file to download.
+            destination_path: The local path to save the file to.
+
+        Raises:
+            OpenQAClientLogDownloadError: If the download fails.
+        """
+        log_file_url = f"https://{self.hostname}/tests/{job_id}/file/{filename}"
+        try:
+            with self.client.session.get(log_file_url, stream=True, timeout=30) as r:
+                r.raise_for_status()
+                with open(destination_path, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+        except requests.exceptions.RequestException as e:
+            error_message = f"Failed to download log '{filename}' for job {job_id}: {e}"
             self.app_logger.error(error_message)
             raise OpenQAClientLogDownloadError(error_message) from e
 

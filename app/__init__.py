@@ -6,7 +6,9 @@ import logging
 from typing import Any, Dict, List, Optional, Pattern, Tuple
 
 
-def load_configuration(app_logger: logging.Logger) -> Tuple[str, Optional[int], List[Dict[str, Any]], Pattern[str], Pattern[str], int]:
+def load_configuration(
+    app_logger: logging.Logger,
+) -> Tuple[str, Optional[int], List[Dict[str, Any]], Pattern[str], Pattern[str], int]:
     """
     Loads configuration from YAML file, pre-compiles regexes, and returns
     key configuration variables.
