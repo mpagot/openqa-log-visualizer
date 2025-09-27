@@ -1,10 +1,11 @@
-from flask import Flask, jsonify, render_template, request
-from typing import Any, Dict, List, Optional, Tuple
-
 import logging
 import time
 import json
 import os
+from typing import Any, Dict, List, Optional, Tuple
+
+from flask import Flask, jsonify, render_template, request
+
 from . import load_configuration
 from .autoinst_parser import parse_autoinst_log
 from .cache import openQACache
@@ -74,13 +75,20 @@ def find_event_pairs(
     2. Mutex 'lock' to 'unlock': For visualizing critical sections.
     3. Barrier 'create' to 'wait': For visualizing multi-job synchronization points.
 
-    The main constraints in the config.yaml are that each channel must have a name and a valid pattern, and the type must be one that the frontend and pairing logic are prepared to handle
-    (e.g., mutex, barrier, module).
+    The main constraints in the config.yaml are that:
+     - each channel must have a name and a valid pattern,
+     - the type must be one that the frontend are prepared to handle
+       (e.g., mutex, barrier, module).
 
-    This function sits at the end of the chain and is highly dependent on the output of parse_autoinst_log. It receives the list of
-    timeline events and uses the type and event_name fields to identify synchronization events. For example, its logic explicitly checks if event_type == "mutex" and if
-    event_name == "mutex_lock". If the channels in config.yaml are not defined correctly, or if parse_autoinst_log fails to tag the events properly, find_event_pairs
-    will not be able to find any pairs.
+    This function sits at the end of the chain and is highly dependent
+    on the output of parse_autoinst_log.
+    It receives the list of timeline events and uses the type and
+    event_name fields to identify synchronization events.
+    For example, its logic explicitly checks if event_type == "mutex" and
+    if event_name == "mutex_lock".
+    If the channels in config.yaml are not defined correctly,
+    or if parse_autoinst_log fails to tag the events properly,
+    find_event_pairs will not be able to find any pairs.
 
     Args:
         timeline_events: A list of all timeline event dictionaries.
@@ -224,7 +232,10 @@ def discover_jobs(
     # This set is crucial for tracking visited jobs to prevent re-fetching and
     # to avoid getting stuck in circular dependencies (e.g., parent -> child -> parent).
     fetched_jobs: set[str] = set()
-    performance_metrics = {"api_calls": [], "cache_hits": 0}
+    performance_metrics: dict[str, Any] = {
+        "api_calls": [],
+        "job_details_cache_hits": 0,
+    }
 
     discovery_loop_start = time.perf_counter()
     while jobs_to_fetch and len(fetched_jobs) < max_jobs:
@@ -240,7 +251,7 @@ def discover_jobs(
                 {"level": "info", "message": f"Cache hit for job {current_job_id}."}
             )
             app.logger.info(f"Cache hit for job {current_job_id}.")
-            performance_metrics["cache_hits"] += 1
+            performance_metrics["job_details_cache_hits"] += 1
             job_details = cache.get_data(current_job_id)
         else:
             app.logger.info(
@@ -319,7 +330,11 @@ def process_job_logs(
         - The updated dictionary of all job details (now including log data).
         - A dictionary of performance metrics for the log processing phase.
     """
-    performance_metrics = {"log_downloads": [], "log_parsing": [], "cache_hits": 0}
+    performance_metrics: dict[str, Any] = {
+        "log_downloads": [],
+        "log_parsing": [],
+        "log_files_cache_hits": 0,
+    }
     log_processing_start = time.perf_counter()
 
     for job_id_key, job_details in all_job_details.items():
@@ -329,21 +344,25 @@ def process_job_logs(
             )
             continue
 
-        log_content, was_cached = cache.get_log_content(job_id_key)
+        log_path, was_cached = cache.get_log_content(job_id_key, "autoinst-log.txt")
         if was_cached:
-            performance_metrics["cache_hits"] += 1
+            performance_metrics["log_files_cache_hits"] += 1
+            debug_log.append(
+                {
+                    "level": "info",
+                    "message": f"Cache hit for log file 'autoinst-log.txt' of job {job_id_key}.",
+                }
+            )
 
-        if not log_content:
-            log_content, perf = _get_log_from_api(
-                client, job_id_key, job_details, debug_log, cache
+        if not log_path:
+            log_path, perf = _download_and_cache_openqa_log(
+                client, job_id_key, job_details, "autoinst-log.txt", debug_log, cache
             )
             if perf:
                 performance_metrics["log_downloads"].append(perf)
 
-        if log_content:
-            _parse_log_content(
-                job_details, log_content, job_id_key, performance_metrics
-            )
+        if log_path:
+            _parse_log_content(job_details, log_path, job_id_key, performance_metrics)
         else:
             # This case is hit if log download failed and error was already logged.
             pass
@@ -372,7 +391,7 @@ def analyze():
     job_id = "unknown"
     hostname = None
     debug_log = []
-    performance_metrics = {"total_duration": 0, "cache_hits": 0}
+    performance_metrics: dict[str, Any] = {"total_duration": 0}
     try:
         request_start_time = time.perf_counter()
         app.logger.info(f"Received analysis request for URL: {log_url}")
@@ -402,8 +421,6 @@ def analyze():
         all_job_details, perf_logs = process_job_logs(
             client, cache, all_job_details, debug_log
         )
-        # Manually aggregate cache_hits from the two separate counters
-        performance_metrics["cache_hits"] += perf_logs.pop("cache_hits", 0)
         performance_metrics.update(perf_logs)
 
         # 3. Build final response data from processed jobs
@@ -489,42 +506,65 @@ def _get_log_from_cache(hostname: str, job_id_key: str) -> Tuple[Optional[str], 
     return None, False  # Return no content and no cache hit
 
 
-def _get_log_from_api(
+def _download_and_cache_openqa_log(
     client: OpenQAClientWrapper,
     job_id_key: str,
     job_details: Dict[str, Any],
+    log_name: str,
     debug_log: List[Dict[str, Any]],
     cache: openQACache,
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-    """Download log content from the API and cache it.
+    """Handles the download and caching of a specific openQA log file.
+
+    This function is called by `process_job_logs` when a cache miss for an
+    openQA log file occurs. It orchestrates the streaming download of the log
+    directly to a cache file and then updates the cache metadata.
 
     Args:
-        client: An instance of OpenQAClientWrapper.
-        job_id_key: The ID of the job.
-        job_details: The dictionary with job details.
-        debug_log: A list to which debug messages will be appended.
-        cache: An instance of the openQACache.
+        client: An instance of OpenQAClientWrapper for making API requests.
+        job_id_key: The ID of the job whose log is being downloaded.
+        job_details: The dictionary containing the job's details.
+        debug_log: A list to which debug and performance messages are appended.
+        cache: An instance of the openQACache to manage cache operations.
 
     Returns:
-        A tuple containing the log content (str) and performance metrics (dict),
-        or (None, None) if an error occurs.
+        A tuple containing:
+        - The local file path of the newly downloaded openQA log (str).
+        - A dictionary of performance metrics for the download and cache write.
+        Returns (None, None) if an error occurs during the download.
     """
     try:
-        log_download_start = time.perf_counter()
-        log_content = client.get_log_content(job_id_key, "autoinst-log.txt")
-        log_download_end = time.perf_counter()
+        download_start = time.perf_counter()
+
+        # The log is going to be downloaded from the openQA server
+        # and directly saved in your disk
+        # within the cache folder.
+        # Ensure cache directory exists and get the destination path
+        log_path = cache.get_log_path(job_id_key, log_name)
+
+        # Stream the download directly to the cache file
+        client.download_log_to_file(job_id_key, log_name, log_path)
+        download_end_write_start = time.perf_counter()
+
+        # Now that the file is on disk, read it back for parsing
+        with open(log_path, "r") as f:
+            log_content = f.read()
+
+        # Save the metadata to cache
+        cache.write_metadata(job_id_key, job_details, log_files=[log_name])
+        write_end = time.perf_counter()
+
         perf = {
             "job_id": job_id_key,
-            "duration": log_download_end - log_download_start,
+            "download_duration": download_end_write_start - download_start,
+            "write_duration": write_end - download_end_write_start,
             "size_bytes": len(log_content.encode("utf-8")),
         }
 
-        # Save the newly downloaded log to cache
-        cache.write_data(job_id_key, job_details, log_content)
         debug_log.append(
             {"level": "info", "message": f"Cached data for job {job_id_key}."}
         )
-        return log_content, perf
+        return log_path, perf
     except OpenQAClientLogDownloadError as e:
         error_msg = str(e)
         job_details["autoinst-log"] = f"ERROR: {error_msg}"
@@ -534,22 +574,34 @@ def _get_log_from_api(
 
 def _parse_log_content(
     job_details: Dict[str, Any],
-    log_content: str,
+    log_path: str,
     job_id_key: str,
     performance_metrics: Dict[str, Any],
 ) -> None:
-    """Parse the log content using the appropriate parser from the config.
+    """Parse the log content from a file using the appropriate parser.
 
     Args:
         job_details: The dictionary with job details.
-        log_content: The content of the log file.
+        log_path: The path to the log file.
         job_id_key: The ID of the job.
         performance_metrics: The dictionary to store performance metrics.
     """
+    try:
+        # app.logger.debug("--> %s", log_path)
+        with open(log_path, "r") as f:
+            app.logger.debug("Read %s content", log_path)
+            log_content = f.read()
+    except FileNotFoundError:
+        job_details["autoinst-log"] = f"ERROR: Log file not found at {log_path}"
+        return
+
     parser_to_use = None
     for parser in autoinst_log_parsers:
         match_name_re = parser.get("match_name")
         if match_name_re and match_name_re.search(job_details.get("name", "")):
+            app.logger.debug(
+                "match_name_re:%s on '%s'", match_name_re, job_details.get("name", "")
+            )
             parser_to_use = parser
             app.logger.info(
                 f"Using parser '{parser['name']}' for job '{job_details.get('name', '')}'"

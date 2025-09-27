@@ -107,10 +107,36 @@ def test_get_log_content_success(mock_openqa_client, app_logger):
     mock_openqa_client.session.get.return_value = mock_response
     wrapper = OpenQAClientWrapper("https://openqa.suse.de/tests/123", app_logger)
     content = wrapper.get_log_content("123", "autoinst-log.txt")
+    expected_url = "https://openqa.suse.de/tests/123/file/autoinst-log.txt"
+    mock_openqa_client.session.get.assert_called_once_with(expected_url, timeout=30)
     assert content == "log content"
-    mock_openqa_client.session.get.assert_called_once_with(
-        "https://openqa.suse.de/tests/123/file/autoinst-log.txt", timeout=30
-    )
+
+
+def test_download_log_to_file(tmp_path):
+    """Tests that download_log_to_file streams content correctly to a file."""
+    # 1. Setup
+    mock_logger = MagicMock()
+    client = OpenQAClientWrapper("https://fake.host/tests/1", mock_logger)
+    log_content = b"line 1\nline 2\n"
+    destination_path = tmp_path / "autoinst-log.txt"
+
+    # Mock the session and its get method
+    mock_session = MagicMock()
+    mock_response = MagicMock()
+    mock_response.iter_content.return_value = [b"line 1\n", b"line 2\n"]
+    mock_response.raise_for_status = MagicMock()
+    mock_session.get.return_value.__enter__.return_value = mock_response
+    client._client = MagicMock()
+    client._client.session = mock_session
+
+    # 2. Call the (not yet existing) method
+    client.download_log_to_file("1", "autoinst-log.txt", str(destination_path))
+
+    # 3. Assertions
+    expected_url = "https://fake.host/tests/1/file/autoinst-log.txt"
+    mock_session.get.assert_called_once_with(expected_url, stream=True, timeout=30)
+    mock_response.raise_for_status.assert_called_once()
+    assert destination_path.read_bytes() == log_content
 
 
 def test_get_log_content_http_error(mock_openqa_client, app_logger):

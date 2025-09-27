@@ -1,6 +1,7 @@
 import os
 import logging
 import json
+from typing import Any
 
 
 class openQACache:
@@ -25,7 +26,10 @@ class openQACache:
     - **Data Format:** Each cache file is a JSON object containing two main keys:
       - `job_details`: A dictionary holding the complete JSON response for a job's
         details from the openQA API.
-      - `log_content`: A string containing the full content of the
+      - `log_files`: a list of log files downloaded from openQA and stored as
+        separated files assiciated to this job_id. Log files are stored in a folder
+        named with the value of the job_id, log filename is the one in this list.
+      - [DEPRECATED] `log_content`: A string containing the full content of the
         `autoinst-log.txt` for that job.
 
     Workflow
@@ -38,8 +42,8 @@ class openQACache:
         `job_details`, and the API call to the openQA server is skipped.
 
     2.  **Log Processing (`process_job_logs`):** Before attempting to download a
-        log file, the application calls `cache.get_log_content()`. If the log is
-        found in the cache, the download is skipped.
+        log file, the application calls `cache.get_log_content('filename.whatever')`.
+        If the log is found in the cache, the download is skipped.
 
     3.  **Cache Writing (`_get_log_from_api`):** A cache file is written only after
         job data and its corresponding log file have been successfully downloaded
@@ -81,17 +85,17 @@ class openQACache:
             return 0
         return total
 
-    def _file_path(self, job_id) -> str:
+    def _file_path(self, job_id: str) -> str:
         return os.path.join(self.cache_host_dir, f"{job_id}.json")
 
-    def hit(self, job_id) -> bool:
+    def hit(self, job_id: str) -> bool:
         return os.path.exists(self._file_path(job_id))
 
-    def get_data(self, job_id) -> dict | None:
+    def get_data(self, job_id: str) -> dict[str, Any] | None:
         try:
             with open(self._file_path(job_id), "r") as f:
                 cached_data = json.load(f)
-                job_details = cached_data.get("job_details")
+                job_details: dict[str, Any] | None = cached_data.get("job_details")
                 if job_details:
                     job_details["is_cached"] = True
                     return job_details
@@ -104,12 +108,25 @@ class openQACache:
             self.logger.error(f"Error reading cache for job {job_id}: {e}")
             return None
 
-    def get_log_content(self, job_id: str) -> tuple[str | None, bool]:
+    def get_log_path(self, job_id: str, log_filename: str) -> str:
+        """
+        Returns the full path for a given log file in the cache.
+        Ensures the directory for a job's logs exists.
+        """
+        job_log_dir = os.path.join(self.cache_host_dir, job_id)
+        os.makedirs(job_log_dir, exist_ok=True)
+        return os.path.join(job_log_dir, log_filename)
+
+    def get_log_content(
+        self, job_id: str, log_file: str | None = None
+    ) -> tuple[str | None, bool]:
         """
         Attempts to retrieve log content for a specific job from the cache.
 
         Args:
             job_id: The ID of the job.
+            log_file: The name of the log file to retrieve. If None, it will
+                      try to read the deprecated 'log_content' from the main cache file.
 
         Returns:
             A tuple containing the log content (str) and a boolean indicating
@@ -122,32 +139,62 @@ class openQACache:
         try:
             with open(cache_file, "r") as f:
                 cached_data = json.load(f)
-                log_content = cached_data.get("log_content")
-                if log_content:
-                    self.logger.info(f"Cache hit for log content of job {job_id}.")
-                    return log_content, True
+
+            # New log_files logic
+            if log_file:
+                if "log_files" in cached_data and log_file in cached_data["log_files"]:
+                    log_path = os.path.join(self.cache_host_dir, job_id, log_file)
+                    if os.path.exists(log_path):
+                        with open(log_path, "r") as f:
+                            self.logger.info(
+                                f"Cache hit for log file '{log_file}' of job {job_id}."
+                            )
+                            return f.read(), True
+                    else:
+                        self.logger.warning(
+                            f"Cache metadata for log '{log_file}' of job {job_id} exists, but file is missing."
+                        )
+                        return None, False
                 else:
-                    self.logger.warning(
-                        f"Cache file for job {job_id} exists but contains no 'log_content'."
+                    self.logger.info(
+                        f"Cache miss for log file '{log_file}' of job {job_id}."
                     )
                     return None, False
+
+            # Deprecated log_content logic
+            log_content = cached_data.get("log_content")
+            if log_content:
+                self.logger.info(f"Cache hit for log content of job {job_id}.")
+                return log_content, True
+            else:
+                self.logger.warning(
+                    f"Cache file for job {job_id} exists but contains no 'log_content' or matching 'log_files'."
+                )
+                return None, False
         except (json.JSONDecodeError, IOError) as e:
             self.logger.error(f"Failed to read or parse cache file {cache_file}: {e}")
             return None, False
 
-    def write_data(self, job_id: str, job_details: dict, log_content: str) -> None:
+    def write_metadata(
+        self, job_id: str, job_details: dict[str, Any], log_files: list[str]
+    ) -> None:
         """
-        Writes job details and log content to a cache file.
+        Writes job details and a list of log files to a cache metadata file.
 
         Args:
             job_id: The ID of the job.
             job_details: A dictionary containing the job's details.
-            log_content: A string containing the job's log content.
+            log_files: A list of log filenames associated with the job.
         """
         cache_file = self._file_path(job_id)
+        data_to_cache: dict[str, Any] = {
+            "job_details": job_details,
+            "log_files": log_files,
+        }
+
         try:
             with open(cache_file, "w") as f:
-                json.dump({"job_details": job_details, "log_content": log_content}, f)
-            self.logger.info(f"Successfully cached data for job {job_id}.")
+                json.dump(data_to_cache, f)
+            self.logger.info(f"Successfully cached metadata for job {job_id}.")
         except (IOError, TypeError) as e:
             self.logger.error(f"Failed to write cache for job {job_id}: {e}")

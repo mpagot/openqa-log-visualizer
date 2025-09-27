@@ -1,0 +1,8 @@
+long_sparse:
+    job_id: 0
+    lines: 10000
+    match_ratio: 0.01
+medium_dense:
+    job_id: 1
+    lines: 500
+    match_ratio: 0.99

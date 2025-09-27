@@ -1,7 +1,14 @@
 import re
 from unittest.mock import MagicMock, patch
 import pytest
-from app.main import find_event_pairs, create_timeline_events, format_job_name, app
+from pathlib import Path
+from app.main import (
+    _parse_log_content,
+    find_event_pairs,
+    create_timeline_events,
+    format_job_name,
+    app,
+)
 
 
 @pytest.fixture
@@ -218,6 +225,48 @@ def test_find_event_pairs_barrier_one_to_many():
     assert all_pairs[1]["pair_type"] == "barrier_create_wait"
 
 
+def test_parse_log_content(tmp_path, monkeypatch):
+    """
+    Tests that _parse_log_content correctly reads a file and parses its content.
+    """
+    # 1. Setup
+    log_file = tmp_path / "autoinst.txt"
+    log_file.write_text("[2025-09-18T10:00:00.123] <1> [some_channel] some message")
+
+    job_details = {"name": "fake_job_for_parser"}
+    performance_metrics = {"log_parsing": []}
+    job_id = "777"
+
+    # Mock the parsers used by the function
+    mock_parser = {
+        "name": "test_parser",
+        "match_name": re.compile(".*"),
+        "channels": [
+            {
+                "name": "some_channel",
+                "type": "some_type",
+                "pattern": re.compile(r"\[some_channel\] (?P<content>.*)"),
+            }
+        ],
+    }
+    monkeypatch.setattr("app.main.autoinst_log_parsers", [mock_parser])
+    monkeypatch.setattr("app.main.timestamp_re", re.compile(r"^\[(?P<timestamp>\S+)\]"))
+    monkeypatch.setattr("app.main.perl_exception_re", re.compile(r"NEVER_MATCH"))
+
+    # 2. Call the function with a file path
+    _parse_log_content(job_details, str(log_file), job_id, performance_metrics)
+
+    # 3. Assertions
+    assert "autoinst-log" in job_details
+    parsed_log = job_details["autoinst-log"]
+    assert len(parsed_log) == 1
+    assert parsed_log[0]["message"] == "<1> [some_channel] some message"
+    assert parsed_log[0]["content"] == "some message"
+    assert parsed_log[0]["event_name"] == "some_channel"
+    assert len(performance_metrics["log_parsing"]) == 1
+    assert performance_metrics["log_parsing"][0]["job_id"] == job_id
+
+
 def test_find_event_pairs_ignores_events_without_name():
     """Tests that events without a mutex/barrier name are ignored."""
     mock_logger = MagicMock()
@@ -275,7 +324,55 @@ def test_create_timeline_events():
     assert timeline[2]["log_index"] == 0
 
 
-def test_analyze_cache_write(client):
+@patch("app.main.OpenQAClientWrapper")
+def test_analyze_log_cache_hit(mock_client_wrapper, client, tmp_path):
+    """
+    Tests that a second call to /analyze for the same job results in a log cache hit.
+    """
+    # 1. Setup
+    mock_client_instance = MagicMock()
+    mock_client_instance.hostname = "fake_host"
+    mock_client_instance.job_id = "1"
+    mock_client_instance.get_job_details.return_value = {
+        "id": "1",
+        "name": "fake_job",
+        "state": "done",
+        "children": {},
+        "parents": {},
+    }
+
+    # The new download method doesn't return content, it writes to a file.
+    # We can mock its behavior to simulate the file creation.
+    def mock_download(job_id, filename, dest_path):
+        Path(dest_path).write_text("This is a fake log.")
+
+    mock_client_instance.download_log_to_file = MagicMock(side_effect=mock_download)
+    mock_client_instance.get_job_url.return_value = "http://fake/t1"
+    mock_client_wrapper.return_value = mock_client_instance
+
+    with patch("app.main.CACHE_DIR", str(tmp_path)):
+        # 2. First call (populate cache)
+        res1 = client.post("/analyze", json={"log_url": "http://fake/tests/1"})
+        assert res1.status_code == 200
+        # Assert that the download method was called
+        mock_client_instance.download_log_to_file.assert_called_once()
+
+        # 3. Second call (should hit cache)
+        mock_client_instance.download_log_to_file.reset_mock()
+        res2 = client.post("/analyze", json={"log_url": "http://fake/tests/1"})
+        assert res2.status_code == 200
+
+        # 4. Assertions
+        mock_client_instance.download_log_to_file.assert_not_called()
+
+        debug_messages = [log["message"] for log in res2.get_json()["debug_log"]]
+        assert "Cache hit for job 1." in debug_messages
+        assert "Cache hit for log file 'autoinst-log.txt' of job 1." in debug_messages
+
+
+@patch("app.main.openQACache")
+@patch("app.main.OpenQAClientWrapper")
+def test_analyze_cache_write(MockClient, MockCache, client, tmp_path):
     """
     Tests that cache.write_data is called on a cache miss for the log file.
     """
@@ -286,33 +383,36 @@ def test_analyze_cache_write(client):
         "children": {},
         "parents": {},
     }
-    mock_log_content = "some log content"
 
-    with patch("app.main.OpenQAClientWrapper") as MockClient:
+    with patch("app.main.CACHE_DIR", str(tmp_path)):
         mock_client_instance = MockClient.return_value
         mock_client_instance.get_job_details.return_value = mock_job_details
-        mock_client_instance.get_log_content.return_value = mock_log_content
         mock_client_instance.hostname = "fake_host"
         mock_client_instance.job_id = "1"
         mock_client_instance.get_job_url.return_value = "http://fake/t1"
 
-        with patch("app.main.openQACache") as MockCache:
-            mock_cache_instance = MockCache.return_value
-            # Simulate a cache miss for both job data and log content
-            mock_cache_instance.hit.return_value = False
-            mock_cache_instance.get_data.return_value = None
-            mock_cache_instance.get_log_content.return_value = (None, False)
+        def mock_download(job_id, filename, dest_path):
+            # This side effect simulates the download by creating a file
+            Path(dest_path).write_text("This is a fake log.")
 
-            # Make the call to the endpoint
-            response = client.post("/analyze", json={"log_url": "http://fake/tests/1"})
+        mock_client_instance.download_log_to_file.side_effect = mock_download
 
-            # Assertions
-            assert response.status_code == 200
-            # Check that get_job_details was called
-            mock_client_instance.get_job_details.assert_called_once_with("1")
-            # Check that get_log_content was called because of the cache miss
-            mock_client_instance.get_log_content.assert_called_once_with("1", "autoinst-log.txt")
-            # The main assertion: check that write_data was called correctly
-            mock_cache_instance.write_data.assert_called_once_with(
-                "1", mock_job_details, mock_log_content
-            )
+        mock_cache_instance = MockCache.return_value
+        mock_cache_instance.hit.return_value = False
+        mock_cache_instance.get_data.return_value = None
+        mock_cache_instance.get_log_content.return_value = (None, False)
+
+        # Define a valid path for the log file to be written to
+        log_file_path = tmp_path / "autoinst-log.txt"
+        mock_cache_instance.get_log_path.return_value = str(log_file_path)
+
+        # Make the call to the endpoint
+        response = client.post("/analyze", json={"log_url": "http://fake/tests/1"})
+
+        # Assertions
+        assert response.status_code == 200
+        mock_client_instance.get_job_details.assert_called_once_with("1")
+        mock_client_instance.download_log_to_file.assert_called_once()
+        mock_cache_instance.write_metadata.assert_called_once_with(
+            "1", mock_job_details, log_files=["autoinst-log.txt"]
+        )
