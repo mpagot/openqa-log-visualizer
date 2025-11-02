@@ -1,29 +1,37 @@
 from app.cache import openQACache
-import logging
 import json
 import pytest
 from pathlib import Path
 
 
-# Fixture for creating a logger instance for tests
-# Constructor is calle din the fixture. Is it a good idea?
+# Fixture for creating a cache instance with a temporary path
 @pytest.fixture
-def logger():
-    return logging.getLogger("test_cache logger")
+def cache_init(tmp_path, app_logger):
+    def _func(ignore_cache=False):
+        cache_dir = tmp_path / "cache"
+        hostname = "test_host"
+        return openQACache(
+            str(cache_dir),
+            hostname,
+            1024 * 1024,
+            app_logger,
+            user_ignore_cache=ignore_cache,
+        )
+
+    return _func
 
 
 # Fixture for creating a cache instance with a temporary path
 @pytest.fixture
-def cache(tmp_path, logger):
-    cache_dir = tmp_path / "cache"
-    hostname = "test_host"
-    return openQACache(str(cache_dir), hostname, 1024 * 1024, logger)
+def cache(cache_init):
+    return cache_init()
 
 
 def test_constructor(cache):
     """
-    Tests that the OpenQACache constructor correctly initializes attributes
-    and creates the cache directory.
+    Verifies that the openQACache constructor correctly initializes its
+    attributes and creates the necessary cache directory structure on the
+    filesystem.
     """
     cache_host_dir = Path(cache.cache_host_dir)
     assert cache_host_dir.exists()
@@ -32,17 +40,16 @@ def test_constructor(cache):
 
 def test_get_size_empty(cache):
     """
-    Tests the get_size method for correct cache size calculation.
-    Give zero on an empty cache.
+    Verifies that `get_size()` returns 0 for a newly created, empty
+    cache.
     """
     assert cache.get_size() == 0
 
 
 def test_get_size_single_file(cache):
     """
-    Tests the get_size method for correct cache size calculation.
-    Test it with a single file, the size has to be just the size
-    of that single file.
+    Verifies that `get_size()` correctly reports the size of a single
+    file in the cache.
     """
     file_path = Path(cache.cache_host_dir) / "1"
     test_data_1 = "test data"
@@ -52,9 +59,8 @@ def test_get_size_single_file(cache):
 
 def test_get_size_multiple_files(cache):
     """
-    Tests the get_size method for correct cache size calculation.
-    Test it with a cache populated by many files,
-    the size has to be the sum of all of them.
+    Verifies that `get_size()` correctly calculates the total size of a
+    cache containing multiple files and subdirectories.
     """
     # this part duplicate previous test, but I like to see if
     # the get_size can also keep track of cache size that grow over the time
@@ -78,175 +84,237 @@ def test_get_size_multiple_files(cache):
     assert cache.get_size() == expected_size
 
 
-def test_hit_miss(cache):
+def test_get_size_ignores_symlinks(cache):
     """
-    Tests the hit method for correctly identifying cached jobs.
-    Test cache miss
+    Verifies that `get_size()` correctly ignores symbolic links when
+    calculating the total cache size to prevent double-counting.
+    """
+    file_path_1 = Path(cache.cache_host_dir) / "1"
+    test_data_1 = "test data"
+    file_path_1.write_text(test_data_1)
+    assert cache.get_size() == len(test_data_1)
+
+    file_path_2 = Path(cache.cache_host_dir) / "2"
+    file_path_2.symlink_to(file_path_1)
+
+    assert cache.get_size() == len(test_data_1)
+
+
+def test_is_details_cached_miss(cache):
+    """
+    Verifies that `is_details_cached()` returns `False` for a job ID that
+    is not in the cache.
     """
     job_id = "123"
-    assert not cache.hit(job_id)
+    assert not cache.is_details_cached(job_id)
 
 
-def test_hit_hit(cache):
+def test_is_details_cached_hit(cache):
     """
-    Tests the hit method for correctly identifying cached jobs.
-    Test cache hit
+    Verifies that `is_details_cached()` returns `True` for a job ID that exists
+    in the cache.
     """
     job_id = "123"
     file_path = Path(cache.cache_host_dir) / f"{job_id}.json"
     file_path.write_text("data")
-    assert cache.hit(job_id)
+    assert cache.is_details_cached(job_id)
+
+
+def test_is_details_cached_user_ignore(cache_init):
+    """
+    Verifies that `is_details_cached()` returns `True` for a job ID
+    that exists in the cache.
+    """
+    this_cache = cache_init(ignore_cache=True)
+    job_id = "123"
+    file_path = Path(this_cache.cache_host_dir) / f"{job_id}.json"
+    file_path.write_text("data")
+    assert not this_cache.is_details_cached(job_id)
 
 
 def test_get_data_cache_miss_no_file(cache):
     """
-    Tests the get_data method for retrieving job details from the cache.
-    Test how it behaves in case of missing file.
+    Verifies that `get_job_details()` returns `None` when the cache file for a
+    job ID does not exist.
     """
     job_id = "456"
 
     # test even before to have the cache file
-    assert cache.get_data(job_id) is None
+    assert cache.get_job_details(job_id) is None
 
 
 def test_get_data_cache_miss_empty_file(cache):
     """
-    Tests the get_data method for retrieving job details from the cache.
-    Test how it behaves in case of empty file.
+    Verifies that `get_job_details()` returns `None` when the cache file for a
+    job ID is empty.
     """
     job_id = "456"
     # test with empty file, file is there but empty
     file_path = Path(cache.cache_host_dir) / f"{job_id}.json"
     file_path.write_text("")
-    assert cache.get_data(job_id) is None
+    assert cache.get_job_details(job_id) is None
 
 
 def test_get_data_invalid_json(cache):
     """
-    Tests the get_data method for retrieving job details from the cache.
-    Test with invalid cached data
+    Verifies that `get_job_details()` returns `None` when the cache file
+    contains invalid JSON.
     """
     job_id = "456"
-    job_details = {"id": job_id, "name": "test_job"}
     file_path = Path(cache.cache_host_dir) / f"{job_id}.json"
     file_path.write_text("this is not json")
-    assert cache.get_data(job_id) is None
+    assert cache.get_job_details(job_id) is None
 
 
 def test_get_data_missing_job_details(cache):
     """
-    Tests the get_data method for retrieving job details from the cache.
-    Test with valid cached data, it is json but it miss some mandatory keys
+    Verifies that `get_job_details()` returns `None` when the cache file is
+    valid JSON but lacks the required 'job_details' key.
     """
     job_id = "456"
-    job_details = {"id": job_id, "name": "test_job"}
     file_path = Path(cache.cache_host_dir) / f"{job_id}.json"
-    file_path.write_text(json.dumps({"log_content": "log only"}))
-    assert cache.get_data(job_id) is None
+    file_path.write_text(json.dumps({"some": "data"}))
+    assert cache.get_job_details(job_id) is None
 
 
 def test_get_data(cache):
     """
-    Tests the get_data method for retrieving job details from the cache.
-    Test with valid cached data
+    Verifies that `get_job_details()` successfully retrieves and returns job
+    details from a valid cache file.
     """
     job_id = "456"
     job_details = {"id": job_id, "name": "test_job"}
     file_path = Path(cache.cache_host_dir) / f"{job_id}.json"
     file_path.write_text(json.dumps({"job_details": job_details, "log_content": "log"}))
 
-    retrieved_data = cache.get_data(job_id)
+    retrieved_data = cache.get_job_details(job_id)
+
     assert retrieved_data["id"] == job_id
-    assert retrieved_data["is_cached"] is True
 
 
-def test_get_log_content_miss(cache):
+def test_get_data_user_ignore(cache_init):
     """
-    Tests that get_log_content returns (None, False) on a cache miss.
+    Verifies that `get_job_details()` return None even if
+    details file is there, when user initialize the cache to ignore the cache
     """
-    content, hit = cache.get_log_content("non_existent_job")
-    assert content is None
-    assert hit is False
+    this_cache = cache_init(ignore_cache=True)
+    job_id = "456"
+    job_details = {"id": job_id, "name": "test_job"}
+    file_path = Path(this_cache.cache_host_dir) / f"{job_id}.json"
+    file_path.write_text(json.dumps({"job_details": job_details, "log_content": "log"}))
+
+    assert this_cache.get_job_details(job_id) is None
 
 
-def test_get_log_content_invalid_json(cache):
+def test_get_cached_log_filepath_missing_details(cache):
     """
-    Tests that get_log_content returns (None, False) for a corrupt cache file.
+    Verifies that `get_cached_log_filepath()` returns `None` when the main
+    job details metadata file is missing.
     """
-    job_id = "789"
+    job_id = "456"
+    log_dir = Path(cache.cache_host_dir) / job_id
+    assert not log_dir.exists()
+
+    actual_path = cache.get_cached_log_filepath(job_id, "something.txt")
+
+    assert actual_path is None
+
+
+def test_get_cached_log_filepath_invalid(cache):
+    """
+    Verifies that `get_cached_log_filepath()` returns `None` when the job
+    details file exists but does not contain the 'log_files' key.
+    """
+    job_id = "456"
+    job_details = {"id": job_id, "name": "test_job"}
     file_path = Path(cache.cache_host_dir) / f"{job_id}.json"
-    file_path.write_text("this is not valid json")
+    file_path.write_text(json.dumps({"job_details": job_details}))
+    assert file_path.exists()
 
-    content, hit = cache.get_log_content(job_id)
-    assert content is None
-    assert hit is False
+    actual_path = cache.get_cached_log_filepath(job_id, "something.txt")
+
+    assert actual_path is None
 
 
-def test_get_log_content_missing_key(cache):
+def test_get_cached_log_filepath_missing_file(cache):
     """
-    Tests that get_log_content returns (None, False)
-    if 'log_content' key is missing.
+    Verifies that `get_cached_log_filepath()` returns `None` when the log is
+    not listed in the 'log_files' metadata.
     """
-    job_id = "789"
+    job_id = "456"
+    log_filename = "something.txt"
+    job_details = {"id": job_id, "name": "test_job"}
+    log_dir = Path(cache.cache_host_dir)
     file_path = Path(cache.cache_host_dir) / f"{job_id}.json"
-    file_path.write_text(json.dumps({"job_details": {}}))
+    file_path.write_text(json.dumps({"job_details": job_details, "log_files": []}))
+    assert file_path.exists()
 
-    content, hit = cache.get_log_content(job_id)
-    assert content is None
-    assert hit is False
+    actual_path = cache.get_cached_log_filepath(job_id, log_filename)
+
+    assert actual_path is None
+    # Check that calling the method
+    # also result in folder to be created
+    assert log_dir.exists()
+    assert log_dir.is_dir()
 
 
-def test_get_log_content_hit(cache):
+def test_get_cached_log_filepath(cache):
     """
-    Tests that get_log_content correctly retrieves content on a cache hit.
-    Old format using log_content
+    Verifies that `get_cached_log_filepath()` returns the correct file path
+    when the log is listed in the metadata and the log file exists on
+    disk.
     """
-    job_id = "789"
-    log_content = "This is the log content."
+    job_id = "456"
+    log_filename = "something.txt"
+    job_details = {"id": job_id, "name": "test_job"}
+    log_dir = Path(cache.cache_host_dir)
     file_path = Path(cache.cache_host_dir) / f"{job_id}.json"
-    file_path.write_text(json.dumps({"job_details": {}, "log_content": log_content}))
+    file_path.write_text(
+        json.dumps({"job_details": job_details, "log_files": [log_filename]})
+    )
+    log_file_dir = log_dir / job_id
+    log_file_dir.mkdir()
+    log_file_path = log_file_dir / log_filename
+    log_file_path.write_text("Some info")
+    assert file_path.exists()
 
-    retrieved_content, hit = cache.get_log_content(job_id)
-    assert retrieved_content == log_content
-    assert hit is True
+    actual_path = cache.get_cached_log_filepath(job_id, log_filename)
+
+    assert str(log_file_path) == actual_path
+    # Check that calling the method
+    # also result in folder to be created
+    assert log_dir.exists()
+    assert log_dir.is_dir()
 
 
-def test_get_log_content_hit_file(cache):
+def test_get_cached_log_filepath_user_ignore(cache_init):
     """
-    Tests that get_log_content correctly retrieves content on a cache hit.
-    New format support multiple log files, and files are not embedded in the json.
+    Verifies that `get_cached_log_filepath()` returns the correct file path
+    when the log is listed in the metadata and the log file exists on
+    disk.
     """
-    job_id = "789"
-    log_content = "This is the log content."
-    file_path = Path(cache.cache_host_dir) / f"{job_id}.json"
-    file_path.write_text(json.dumps({"job_details": {}, "log_files": ["autoinst.txt"]}))
-    log_path = Path(cache.cache_host_dir) / job_id / "autoinst.txt"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(log_content)
+    this_cache = cache_init(ignore_cache=True)
+    job_id = "456"
+    log_filename = "something.txt"
+    job_details = {"id": job_id, "name": "test_job"}
+    log_dir = Path(this_cache.cache_host_dir)
+    file_path = Path(this_cache.cache_host_dir) / f"{job_id}.json"
+    file_path.write_text(
+        json.dumps({"job_details": job_details, "log_files": [log_filename]})
+    )
+    log_file_dir = log_dir / job_id
+    log_file_dir.mkdir()
+    log_file_path = log_file_dir / log_filename
+    log_file_path.write_text("Some info")
+    assert file_path.exists()
 
-    retrieved_content, hit = cache.get_log_content(job_id, "autoinst.txt")
-    assert retrieved_content == log_content
-    assert hit is True
+    assert this_cache.get_cached_log_filepath(job_id, log_filename) is None
 
 
-def test_get_log_content_log_file_missing(cache):
+def test_write_details(cache):
     """
-    Tests that get_log_content correctly retrieves content on a cache hit.
-    New format support multiple log files, but the log file
-    indicated in the details json  is missing on the disk
-    """
-    job_id = "789"
-    file_path = Path(cache.cache_host_dir) / f"{job_id}.json"
-    file_path.write_text(json.dumps({"job_details": {}, "log_files": ["autoinst.txt"]}))
-
-    retrieved_content, hit = cache.get_log_content(job_id, "autoinst.txt")
-    assert retrieved_content is None
-    assert hit is False
-
-
-def test_write_metadata(cache):
-    """
-    Tests that write_metadata correctly writes the metadata file.
+    Verifies that `write_details()` correctly creates a job's JSON
+    metadata file with the provided job details and list of log files.
     """
     job_id = "101"
     job_details = {"id": job_id, "name": "meta_job"}
@@ -254,12 +322,12 @@ def test_write_metadata(cache):
     job_log_dir = Path(cache.cache_host_dir) / job_id
     job_log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Manually create the log files that write_metadata assumes exist
+    # Manually create the log files that write_details assumes exist
     for log in log_files:
         log_path = job_log_dir / log
         log_path.write_text(f"content of {log}")
 
-    cache.write_metadata(job_id, job_details, log_files)
+    cache.write_details(job_id, job_details, log_files)
 
     # Verify the metadata file
     cache_file = Path(cache.cache_host_dir) / f"{job_id}.json"
@@ -271,13 +339,15 @@ def test_write_metadata(cache):
     assert "log_content" not in cached_data
 
 
-def test_write_metadata_no_logs(cache):
+def test_write_details_no_logs(cache):
     """
-    Tests that write_metadata correctly handles a job with no log files.
+    Verifies that `write_details()` functions correctly when a job has
+    no associated log files, creating a metadata file with an empty
+    'log_files' list.
     """
     job_id = "202"
 
-    cache.write_metadata(job_id, {"id": job_id, "name": "no_log_job"}, [])
+    cache.write_details(job_id, {"id": job_id, "name": "no_log_job"}, [])
 
     # Verify the metadata file
     cache_file = Path(cache.cache_host_dir) / f"{job_id}.json"
@@ -286,21 +356,3 @@ def test_write_metadata_no_logs(cache):
         cached_data = json.load(f)
     assert cached_data["job_details"]["id"] == job_id
     assert cached_data["log_files"] == []
-
-
-def test_get_log_path(cache):
-    """
-    Tests that get_log_path returns the correct path for a log file.
-    """
-    job_id = "456"
-    log_filename = "autoinst-log.txt"
-    log_dir = Path(cache.cache_host_dir) / job_id
-    expected_path = log_dir / log_filename
-    assert not log_dir.exists()
-
-    # This method doesn't exist yet, so this will fail
-    actual_path = cache.get_log_path(job_id, log_filename)
-
-    assert str(expected_path) == actual_path
-    assert log_dir.exists()
-    assert log_dir.is_dir()

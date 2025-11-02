@@ -6,14 +6,17 @@ This guide explains how to use the features of the openQA Log Visualizer web int
 
 To begin, you need to provide the URL of an openQA job.
 
-* **Log URL Input**: Paste any URL from an openQA job's page, like the link to a log file or the main test details page. The tool is smart enough to extract the necessary information (like the server hostname and job ID) from a standard openQA URL.
+* **Log URL Input**: Paste any URL from an openQA job's page, like the link to a log file or the main test details page.
+                     The tool is smart enough to extract the necessary information (like the server hostname and job ID) from a standard openQA URL.
   * *Example URL*: `https://openqa.opensuse.org/tests/5277830`
 
 * **Analyze Button**: Once you've entered the URL, click the "Analyze" button to start the process.
 
 ![Loading a job for the first time](../img/url_loading_first_time.gif)
 
-* **Ignore Cache Checkbox**: By default, the application caches the results of an analysis on your disk to speed up subsequent requests for the same job. The application only caches results for jobs that are in a "done" state. If you want to force a fresh analysis and bypass the cache (e.g., if the job has been re-run), check this box before clicking "Analyze".
+* **Ignore Cache Checkbox**: By default, the application caches the results of an analysis on your disk to speed up subsequent requests for the same job.
+                             The application only caches results for jobs that are in a "done" state.
+                             If you want to force a fresh analysis and bypass the cache (e.g., if the job has been re-run), check this box before clicking "Analyze".
 
 ![Loading a job from the cache is much faster](../img/url_loading_cache.gif)
 
@@ -52,17 +55,23 @@ This is the most powerful feature of the tool. It provides a single, interactive
 
 The timeline uses several visual elements to represent different activities:
 
-* **Event Circles**: These represent key events parsed from the logs. The color of the circle corresponds to the event `type` defined in `config.yaml` (e.g., `mutex`, `barrier`, `error`). Hover over a circle to see a tooltip with its exact timestamp, job name, and log message.
-* **Critical Section Rectangles**: Red rectangles highlight the duration of a `mutex lock`/`unlock` pair, representing a critical section. If a lock spans two different jobs, parallel rectangles will be drawn on both lifelines. Hover over a rectangle to see a tooltip showing the name of the mutex.
-* **Synchronization Arrows**: These represent point-in-time signals between jobs. They are color-coded to match the event type that generates them (e.g., a blue arrow for a `mutex` signal, a green arrow for a `barrier` signal). These arrows are hidden by default and appear when you hover over a related event.
+* **Event Circles**: These represent key events parsed from the logs. The color of the circle corresponds to the event `type` defined in `config.yaml` (e.g., `mutex`, `barrier`, `error`).
+                     Hover over a circle to see a tooltip with its exact timestamp, job name, and log message.
+* **Critical Section Rectangles**: Red rectangles highlight the duration of a `mutex lock`/`unlock` pair, representing a critical section.
+                                   If a lock spans two different jobs, parallel rectangles will be drawn on both lifelines. Hover over a rectangle to see a tooltip showing the name of the mutex.
+* **Synchronization Arrows**: These represent point-in-time signals between jobs. They are color-coded to match the event type that generates them
+                              (e.g., a blue arrow for a `mutex` signal, a green arrow for a `barrier` signal). These arrows are hidden by default and appear when you hover over a related event.
 
 #### Interactive Features
 
 ![Highlights events](../img/MergeTimeline_events.gif)
 
-* **Hover-to-Trace**: Hovering your mouse over any event circle that is part of a synchronization (like a `mutex lock` or `barrier wait`) will instantly highlight the entire interaction. Unrelated events will fade out, and the corresponding arrows or critical section rectangles will become visible, showing you the complete start-to-end flow of the synchronization.
-* **Tooltips**: As mentioned, hovering over event circles and critical section rectangles will display tooltips with specific details. The event circle's tooltip has priority, ensuring you can always inspect an event even if it's inside a rectangle.
-* **Click-to-Highlight**: Click on any event circle. The page will automatically expand the relevant job's "autoinst-log" section and scroll to highlight the corresponding log entry. This is the primary way to correlate a high-level event on the timeline with the specific log line that generated it.
+* **Hover-to-Trace**: Hovering your mouse over any event circle that is part of a synchronization (like a `mutex lock` or `barrier wait`) will instantly highlight the entire interaction.
+                      Unrelated events will fade out, and the corresponding arrows or critical section rectangles will become visible, showing you the complete start-to-end flow of the synchronization.
+* **Tooltips**: As mentioned, hovering over event circles and critical section rectangles will display tooltips with specific details.
+                The event circle's tooltip has priority, ensuring you can always inspect an event even if it's inside a rectangle.
+* **Click-to-Highlight**: Click on any event circle. The page will automatically expand the relevant job's "autoinst-log" section and scroll to highlight the corresponding log entry.
+                          This is the primary way to correlate a high-level event on the timeline with the specific log line that generated it.
 * **Zooming**: Click and drag horizontally across a section of the timeline to zoom in on that specific time range. A "Reset Zoom" button will appear, allowing you to return to the full view.
 
 #### Dynamic Legends*
@@ -94,4 +103,5 @@ This section contains the detailed information for each job that was part of the
 
 ### Debug Log
 
-At the very bottom of the page, this box shows a detailed log of the backend analysis process. It includes information about which jobs were fetched, cache hits/misses, and any errors that occurred. It is primarily useful for troubleshooting the visualizer tool itself.
+At the very bottom of the page, this box shows a detailed log of the backend analysis process. It includes information about which jobs were fetched,
+cache hits/misses, and any errors that occurred. It is primarily useful for troubleshooting the visualizer tool itself.

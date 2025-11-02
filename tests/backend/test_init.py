@@ -7,12 +7,22 @@ def test_load_configuration_success(tmp_path, app_logger, monkeypatch):
     """Tests successful loading of a valid configuration file."""
     config_content = {
         "max_jobs_to_explore": 20,
-        "autoinst_parser": [
+        "log_parsers": [
             {
-                "name": "test_parser",
-                "match_name": ".*(?P<name>test).*",
-                "channels": [
-                    {"name": "test_channel", "pattern": ".*hello.*", "type": "test"}
+                "name": "Autoinst Log",
+                "log_filename": "autoinst-log.txt",
+                "patterns": [
+                    {
+                        "name": "test_parser",
+                        "match_name": ".*(?P<name>test).*",
+                        "channels": [
+                            {
+                                "name": "test_channel",
+                                "pattern": ".*hello.*",
+                                "type": "test",
+                            }
+                        ],
+                    }
                 ],
             }
         ],
@@ -22,13 +32,17 @@ def test_load_configuration_success(tmp_path, app_logger, monkeypatch):
         yaml.dump(config_content, f)
 
     monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
-    _, _, parsers, _, _, max_jobs = load_configuration(app_logger)
+    _, _, log_parsers, _, _, max_jobs = load_configuration(app_logger)
 
-    assert len(parsers) == 1
-    assert parsers[0]["name"] == "test_parser"
+    assert len(log_parsers) == 1
+    assert log_parsers[0]["name"] == "Autoinst Log"
+    assert log_parsers[0]["log_filename"] == "autoinst-log.txt"
+    patterns = log_parsers[0]["patterns"]
+    assert len(patterns) == 1
+    assert patterns[0]["name"] == "test_parser"
     # Check that regexes have been compiled
-    assert hasattr(parsers[0]["match_name"], "search")
-    assert hasattr(parsers[0]["channels"][0]["pattern"], "search")
+    assert hasattr(patterns[0]["match_name"], "search")
+    assert hasattr(patterns[0]["channels"][0]["pattern"], "search")
 
     assert max_jobs == 20
 
@@ -36,7 +50,15 @@ def test_load_configuration_success(tmp_path, app_logger, monkeypatch):
 def test_load_configuration_invalid_regex(tmp_path, app_logger, monkeypatch):
     """Tests that the application exits if an invalid regex is in the config."""
     config_content = {
-        "autoinst_parser": [{"name": "bad_parser", "match_name": ".*[", "channels": []}]
+        "log_parsers": [
+            {
+                "name": "Autoinst Log",
+                "log_filename": "autoinst-log.txt",
+                "patterns": [
+                    {"name": "bad_parser", "match_name": ".*[", "channels": []}
+                ],
+            }
+        ]
     }
     config_file = tmp_path / "config.yaml"
     with open(config_file, "w") as f:
@@ -55,7 +77,15 @@ def test_load_configuration_invalid_regex_no_named_group(
     Here the regexp is invalid as it does not have a named group '(?P<name>...)'
     """
     config_content = {
-        "autoinst_parser": [{"name": "bad_parser", "match_name": ".*", "channels": []}]
+        "log_parsers": [
+            {
+                "name": "Autoinst Log",
+                "log_filename": "autoinst-log.txt",
+                "patterns": [
+                    {"name": "bad_parser", "match_name": ".*", "channels": []}
+                ],
+            }
+        ]
     }
     config_file = tmp_path / "config.yaml"
     with open(config_file, "w") as f:
@@ -69,7 +99,15 @@ def test_load_configuration_invalid_regex_no_named_group(
 
 def test_load_configuration_missing_parser_name(tmp_path, app_logger, monkeypatch):
     """Tests that the application exits if a parser is missing a name."""
-    config_content = {"autoinst_parser": [{"match_name": ".*", "channels": []}]}
+    config_content = {
+        "log_parsers": [
+            {
+                "name": "Autoinst Log",
+                "log_filename": "autoinst-log.txt",
+                "patterns": [{"match_name": ".*", "channels": []}],
+            }
+        ]
+    }
     config_file = tmp_path / "config.yaml"
     with open(config_file, "w") as f:
         yaml.dump(config_content, f)
@@ -83,8 +121,17 @@ def test_load_configuration_missing_parser_name(tmp_path, app_logger, monkeypatc
 def test_load_configuration_missing_channel_name(tmp_path, app_logger, monkeypatch):
     """Tests that the application exits if a channel is missing a name."""
     config_content = {
-        "autoinst_parser": [
-            {"name": "parser1", "channels": [{"type": "error", "pattern": ".*"}]}
+        "log_parsers": [
+            {
+                "name": "Autoinst Log",
+                "log_filename": "autoinst-log.txt",
+                "patterns": [
+                    {
+                        "name": "parser1",
+                        "channels": [{"type": "error", "pattern": ".*"}],
+                    }
+                ],
+            }
         ]
     }
     config_file = tmp_path / "config.yaml"
@@ -100,9 +147,15 @@ def test_load_configuration_missing_channel_name(tmp_path, app_logger, monkeypat
 def test_load_configuration_missing_match_name_group(tmp_path, app_logger, monkeypatch):
     """Tests that the application exits if match_name is missing the 'name' named group."""
     config_content = {
-        "autoinst_parser": [
-            # This regex is valid, but missing '(?P<name>...)'
-            {"name": "bad_parser", "match_name": ".*test.*", "channels": []}
+        "log_parsers": [
+            {
+                "name": "Autoinst Log",
+                "log_filename": "autoinst-log.txt",
+                "patterns": [
+                    # This regex is valid, but missing '(?P<name>...)'
+                    {"name": "bad_parser", "match_name": ".*test.*", "channels": []}
+                ],
+            }
         ]
     }
     config_file = tmp_path / "config.yaml"
@@ -122,11 +175,17 @@ def test_load_configuration_from_env_variable(tmp_path, app_logger, monkeypatch)
     """
     # Create a default config file with some content in the temp path.
     default_config_content = {
-        "autoinst_parser": [
+        "log_parsers": [
             {
-                "name": "default_parser",
-                "match_name": ".*(?P<name>default).*",
-                "channels": [],
+                "name": "Autoinst Log",
+                "log_filename": "autoinst-log.txt",
+                "patterns": [
+                    {
+                        "name": "default_parser",
+                        "match_name": ".*(?P<name>default).*",
+                        "channels": [],
+                    }
+                ],
             }
         ]
     }
@@ -136,11 +195,17 @@ def test_load_configuration_from_env_variable(tmp_path, app_logger, monkeypatch)
     custom_config_dir = tmp_path / "custom"
     custom_config_dir.mkdir()
     custom_config_content = {
-        "autoinst_parser": [
+        "log_parsers": [
             {
-                "name": "custom_parser",
-                "match_name": ".*(?P<name>custom).*",
-                "channels": [],
+                "name": "Autoinst Log",
+                "log_filename": "autoinst-log.txt",
+                "patterns": [
+                    {
+                        "name": "custom_parser",
+                        "match_name": ".*(?P<name>custom).*",
+                        "channels": [],
+                    }
+                ],
             }
         ]
     }
@@ -153,10 +218,13 @@ def test_load_configuration_from_env_variable(tmp_path, app_logger, monkeypatch)
     monkeypatch.setenv("OQTV_CONFIG_FILE", str(custom_config_file))
 
     # Load configuration and assert that the custom one was loaded.
-    _, _, parsers, _, _, _ = load_configuration(app_logger)
+    _, _, log_parsers, _, _, _ = load_configuration(app_logger)
 
-    assert len(parsers) == 1
-    assert parsers[0]["name"] == "custom_parser"
+    assert len(log_parsers) == 1
+    assert log_parsers[0]["name"] == "Autoinst Log"
+    patterns = log_parsers[0]["patterns"]
+    assert len(patterns) == 1
+    assert patterns[0]["name"] == "custom_parser"
 
 
 def test_load_configuration_cache_full(tmp_path, app_logger, monkeypatch):
@@ -229,3 +297,44 @@ def test_load_configuration_no_cache(tmp_path, app_logger, monkeypatch):
 
     assert CACHE_DIR == "./.cache"
     assert CACHE_MAX_SIZE is None
+
+
+def test_load_configuration_backward_compatibility(tmp_path, app_logger, monkeypatch):
+    """
+    Tests that the old `autoinst_parser` config format is correctly
+    converted to the new `log_parsers` format for backward compatibility.
+    """
+    # Old format configuration
+    config_content = {
+        "autoinst_parser": [
+            {
+                "name": "legacy_parser",
+                "match_name": ".*(?P<name>legacy).*",
+                "channels": [
+                    {
+                        "name": "legacy_channel",
+                        "pattern": ".*hello.*",
+                        "type": "test",
+                    }
+                ],
+            }
+        ]
+    }
+    config_file = tmp_path / "config.yaml"
+    with open(config_file, "w") as f:
+        yaml.dump(config_content, f)
+
+    monkeypatch.setenv("OQTV_CONFIG_FILE", str(config_file))
+    _, _, log_parsers, _, _, _ = load_configuration(app_logger)
+
+    # Assert that it was converted to the new structure
+    assert len(log_parsers) == 1
+    assert log_parsers[0]["name"] == "Autoinst Log"
+    assert log_parsers[0]["log_filename"] == "autoinst-log.txt"
+
+    # The original patterns should be preserved under the 'patterns' key
+    patterns = log_parsers[0]["patterns"]
+    assert len(patterns) == 1
+    assert patterns[0]["name"] == "legacy_parser"
+    assert hasattr(patterns[0]["match_name"], "search")  # Check for compilation
+    assert patterns[0]["channels"][0]["name"] == "legacy_channel"

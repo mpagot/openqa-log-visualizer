@@ -1,8 +1,8 @@
 import pytest
-from unittest.mock import MagicMock
+import logging
 
 
 @pytest.fixture
 def app_logger():
     """Fixture for a mock logger."""
-    return MagicMock()
+    return logging.getLogger("test logger")

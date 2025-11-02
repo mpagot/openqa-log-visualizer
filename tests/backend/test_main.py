@@ -3,10 +3,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pathlib import Path
 from app.main import (
-    _parse_log_content,
     find_event_pairs,
     create_timeline_events,
-    format_job_name,
     app,
 )
 
@@ -18,30 +16,7 @@ def client():
         yield client
 
 
-def test_format_job_name(monkeypatch):
-    """Tests that job names are formatted correctly based on parser regex."""
-    # Mock the app's logger to check for the warning
-    mock_logger = MagicMock()
-    monkeypatch.setattr("app.main.app.logger", mock_logger)
-    # Mock the global autoinst_log_parsers
-    mock_parsers = [
-        {
-            "name": "memoleilnomemio",
-            "match_name": re.compile(
-                r".*(?P<name>folletto_?sonoio|\d?inumaforesta?_?\d+).*"
-            ),
-        }
-    ]
-    monkeypatch.setattr("app.main.autoinst_log_parsers", mock_parsers)
-
-    assert format_job_name("arch:x86_64:inumaforesta1") == "inumaforesta1"
-    assert format_job_name("arch:x86_64:folletto_sonoio") == "folletto_sonoio"
-    assert format_job_name("e_tanti_amici_ho") == "e_tanti_amici_ho"
-    assert format_job_name("") == "Unknown Name"
-
-
-def test_find_event_pairs_mutex_unmatched():
-    mock_logger = MagicMock()
+def test_find_event_pairs_mutex_unmatched(app_logger):
     """Tests the logic for finding create/unlock and unmatched events."""
     timeline_events = [
         {
@@ -82,7 +57,7 @@ def test_find_event_pairs_mutex_unmatched():
         },
     ]
 
-    all_pairs, count = find_event_pairs(timeline_events, mock_logger)
+    all_pairs, count = find_event_pairs(timeline_events, app_logger)
 
     assert count == 6
     # Should find 2 create/unlock pairs and 0 lock/unlock pairs
@@ -101,8 +76,7 @@ def test_find_event_pairs_mutex_unmatched():
     assert all_pairs[1]["pair_type"] == "mutex_create_unlock"
 
 
-def test_find_event_pairs_mutex_create_one_to_many():
-    mock_logger = MagicMock()
+def test_find_event_pairs_mutex_create_one_to_many(app_logger):
     """
     Tests that multiple unlock events are paired with the single most recent create event.
     """
@@ -132,7 +106,7 @@ def test_find_event_pairs_mutex_create_one_to_many():
             "type": "mutex",
         },
     ]
-    all_pairs, _ = find_event_pairs(timeline_events, mock_logger)
+    all_pairs, _ = find_event_pairs(timeline_events, app_logger)
     # Should find 2 create/unlock pairs and 0 lock/unlock pairs
     assert len(all_pairs) == 2
     # Both unlocks pair with the most recent create event (at timestamp "2")
@@ -142,8 +116,7 @@ def test_find_event_pairs_mutex_create_one_to_many():
     assert all_pairs[1]["end_event"]["timestamp"] == "4"
 
 
-def test_find_event_pairs_mutex_lock_nested():
-    mock_logger = MagicMock()
+def test_find_event_pairs_mutex_lock_nested(app_logger):
     """Tests correct pairing of nested lock/unlock events."""
     timeline_events = [
         {
@@ -171,7 +144,7 @@ def test_find_event_pairs_mutex_lock_nested():
             "type": "mutex",
         },
     ]
-    all_pairs, _ = find_event_pairs(timeline_events, mock_logger)
+    all_pairs, _ = find_event_pairs(timeline_events, app_logger)
     # Should find 0 create/unlock pairs and 2 lock/unlock pairs
     assert len(all_pairs) == 2
     # Inner pair (LIFO)
@@ -184,8 +157,7 @@ def test_find_event_pairs_mutex_lock_nested():
     assert all_pairs[1]["pair_type"] == "mutex_lock_unlock"
 
 
-def test_find_event_pairs_barrier_one_to_many():
-    mock_logger = MagicMock()
+def test_find_event_pairs_barrier_one_to_many(app_logger):
     """Tests that multiple barrier_wait events are paired with one barrier_create."""
     timeline_events = [
         {
@@ -207,7 +179,7 @@ def test_find_event_pairs_barrier_one_to_many():
             "type": "barrier",
         },
     ]
-    all_pairs, count = find_event_pairs(timeline_events, mock_logger)
+    all_pairs, count = find_event_pairs(timeline_events, app_logger)
 
     assert count == 3
     assert len(all_pairs) == 2
@@ -225,51 +197,8 @@ def test_find_event_pairs_barrier_one_to_many():
     assert all_pairs[1]["pair_type"] == "barrier_create_wait"
 
 
-def test_parse_log_content(tmp_path, monkeypatch):
-    """
-    Tests that _parse_log_content correctly reads a file and parses its content.
-    """
-    # 1. Setup
-    log_file = tmp_path / "autoinst.txt"
-    log_file.write_text("[2025-09-18T10:00:00.123] <1> [some_channel] some message")
-
-    job_details = {"name": "fake_job_for_parser"}
-    performance_metrics = {"log_parsing": []}
-    job_id = "777"
-
-    # Mock the parsers used by the function
-    mock_parser = {
-        "name": "test_parser",
-        "match_name": re.compile(".*"),
-        "channels": [
-            {
-                "name": "some_channel",
-                "type": "some_type",
-                "pattern": re.compile(r"\[some_channel\] (?P<content>.*)"),
-            }
-        ],
-    }
-    monkeypatch.setattr("app.main.autoinst_log_parsers", [mock_parser])
-    monkeypatch.setattr("app.main.timestamp_re", re.compile(r"^\[(?P<timestamp>\S+)\]"))
-    monkeypatch.setattr("app.main.perl_exception_re", re.compile(r"NEVER_MATCH"))
-
-    # 2. Call the function with a file path
-    _parse_log_content(job_details, str(log_file), job_id, performance_metrics)
-
-    # 3. Assertions
-    assert "autoinst-log" in job_details
-    parsed_log = job_details["autoinst-log"]
-    assert len(parsed_log) == 1
-    assert parsed_log[0]["message"] == "<1> [some_channel] some message"
-    assert parsed_log[0]["content"] == "some message"
-    assert parsed_log[0]["event_name"] == "some_channel"
-    assert len(performance_metrics["log_parsing"]) == 1
-    assert performance_metrics["log_parsing"][0]["job_id"] == job_id
-
-
-def test_find_event_pairs_ignores_events_without_name():
+def test_find_event_pairs_ignores_events_without_name(app_logger):
     """Tests that events without a mutex/barrier name are ignored."""
-    mock_logger = MagicMock()
     timeline_events = [
         {
             "timestamp": "1",
@@ -282,7 +211,7 @@ def test_find_event_pairs_ignores_events_without_name():
             "type": "barrier",
         },  # No barrier name
     ]
-    all_pairs, count = find_event_pairs(timeline_events, mock_logger)
+    all_pairs, count = find_event_pairs(timeline_events, app_logger)
 
     assert len(all_pairs) == 0
     assert count == 0
@@ -349,7 +278,7 @@ def test_analyze_log_cache_hit(mock_client_wrapper, client, tmp_path):
     mock_client_instance.download_log_to_file = MagicMock(side_effect=mock_download)
     mock_client_instance.get_job_url.return_value = "http://fake/t1"
     mock_client_wrapper.return_value = mock_client_instance
-
+    mock_client_wrapper.return_value.autoinst_log_parsers = []
     with patch("app.main.CACHE_DIR", str(tmp_path)):
         # 2. First call (populate cache)
         res1 = client.post("/analyze", json={"log_url": "http://fake/tests/1"})
@@ -398,13 +327,9 @@ def test_analyze_cache_write(MockClient, MockCache, client, tmp_path):
         mock_client_instance.download_log_to_file.side_effect = mock_download
 
         mock_cache_instance = MockCache.return_value
-        mock_cache_instance.hit.return_value = False
-        mock_cache_instance.get_data.return_value = None
-        mock_cache_instance.get_log_content.return_value = (None, False)
-
-        # Define a valid path for the log file to be written to
-        log_file_path = tmp_path / "autoinst-log.txt"
-        mock_cache_instance.get_log_path.return_value = str(log_file_path)
+        mock_cache_instance.is_details_cached.return_value = False
+        mock_cache_instance.get_job_details.return_value = None
+        mock_cache_instance.get_cached_log_filepath.return_value = None
 
         # Make the call to the endpoint
         response = client.post("/analyze", json={"log_url": "http://fake/tests/1"})
@@ -413,6 +338,6 @@ def test_analyze_cache_write(MockClient, MockCache, client, tmp_path):
         assert response.status_code == 200
         mock_client_instance.get_job_details.assert_called_once_with("1")
         mock_client_instance.download_log_to_file.assert_called_once()
-        mock_cache_instance.write_metadata.assert_called_once_with(
+        mock_cache_instance.write_details.assert_called_once_with(
             "1", mock_job_details, log_files=["autoinst-log.txt"]
         )

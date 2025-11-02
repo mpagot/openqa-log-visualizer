@@ -1,12 +1,16 @@
 # openQA Log Visualizer
 
-A web-based tool to analyze and visualize logs from multiple, related openQA jobs. It automatically discovers parallel jobs, parses their logs for key events, and merges them into a single interactive timeline, making it easier to debug complex multi-machine test scenarios.
+A web-based tool to analyze and visualize logs from multiple, related openQA jobs.
+It automatically discovers parallel jobs, parses their logs for key events, and merges them into a single interactive timeline,
+making it easier to debug complex multi-machine test scenarios.
 
 ![The openQA Log Visualizer turning log chaos into a beautiful, interactive timeline.](img/app_recording.gif)
 
 ## The Problem
 
-Debugging race conditions, deadlocks, and other synchronization issues in parallel openQA jobs is challenging. It often requires manually opening multiple `autoinst-log.txt` files and cross-referencing timestamps to understand the sequence of events across different machines.
+Debugging race conditions, deadlocks, and other synchronization issues in parallel openQA jobs is challenging.
+It often requires manually opening multiple `autoinst-log.txt` files and cross-referencing timestamps to understand
+the sequence of events across different machines.
 
 This tool automates that process by:
 1.  Automatic exploring the jobs dependency tree.
@@ -29,7 +33,8 @@ This tool automates that process by:
 ### Prerequisites
 
 *   Python 3.9 or newer
-*   [uv](https://github.com/astral-sh/uv) - An extremely fast Python package installer and resolver. Please refer to its official documentation for installation instructions.
+*   [uv](https://github.com/astral-sh/uv) - An extremely fast Python package installer and resolver.
+    Please refer to its official documentation for installation instructions.
 
 ### Installation
 
@@ -40,16 +45,22 @@ This tool automates that process by:
     ```
 
 2.  **Python dependencies:**
-    This project uses `uv` to manage dependencies, which are listed in the `pyproject.toml` file. `uv` will handle the creation of a virtual environment and the installation of dependencies automatically. This means you do not need to use pip to create a virtual environment. Just run the application using `uv run` as explained below.
+    This project uses `uv` to manage dependencies, which are listed in the `pyproject.toml` file.
+    `uv` will handle the creation of a virtual environment and the installation of dependencies automatically.
+    This means you do not need to use pip to create a virtual environment.
+    Just run the application using `uv run` as explained below.
 
 
 ## Configuration
 
-The core of the log parsing logic is controlled by the `config.yaml` file. This file allows you to define different "parsers," each with its own set of regular expressions ("channels") to extract specific events from `autoinst-log.txt` files.
+The core of the log parsing logic is controlled by the `config.yaml` file. This file allows to define different "parsers",
+each with its own set of regular expressions ("channels") to extract specific events from `autoinst-log.txt` files.
 
-The application matches a job to a parser based on its name and then uses the channels within that parser to find and categorize important log entries.
+The application matches a job to a parser based on its name and then uses the channels within that parser to find and
+categorize important log entries.
 
-For detailed information on the structure of `config.yaml`, how to define parsers, and best practices for writing effective regular expression patterns, please refer to the **Configuration Documentation** (TBD).
+For detailed information on the structure of `config.yaml`, how to define parsers, and best practices for writing
+effective regular expression patterns, please refer to the **Configuration Documentation**.
 
 ## Usage
 

@@ -8,10 +8,15 @@ To support multiple log parsers per job, the `config.yaml` format will be update
 
 ### New `log_parsers` Section
 
-A new top-level key, `log_parsers`, will be introduced. It will be a list of parser configurations. Each of the configuration is specifically associated to one or a family of logfiles.
-Each configuration associated to a logfile has different set of parser to be used accordingly to the test that prodiced this speccific test file. For example `autoinst-log.txt` is a log
-produced by every single job in openQA: so there will be a parser configuration associated to `autoinst-log.txt`. Accordingly to the test sequence was running in the job that produced the log,
-the set of string to look for in the log can change. So within a parser configuration there is usually a list of parser, each associated to a test name.
+A new top-level key, `log_parsers`, will be introduced. It will be a list of parser configurations.
+Each of the configuration is specifically associated to one or a family of logfiles, by matching the filename.
+Each configuration associated to a log filename has different set of parser to be used
+accordingly to the testname that prodiced this specific test file.
+For example `autoinst-log.txt` is a log produced by every single job in openQA:
+so there will be a parser configuration associated to `autoinst-log.txt`.
+Accordingly to the test sequence was running in the job that produced the log,
+the set of string to look for in the log can change.
+So within a parser configuration there is usually a list of parser, each associated to a test name.
 Each parser define a list of channels: each of them is a pattern to look for in the log
 
 Each item in the list will be an object with the following fields:
@@ -76,7 +81,10 @@ log_parsers:
 
 ### Backward Compatibility
 
-To ensure backward compatibility, if the old `autoinst_parser` key is found in `config.yaml`, it will be automatically treated as a single entry in the new `log_parsers` list. The application will assume the `log_filename` is `autoinst-log.txt` and the `name` is "Autoinst Log". `config_ver:` can be also used to detect if format is old or new one
+To ensure backward compatibility, if the old `autoinst_parser` key is found in `config.yaml`,
+it will be automatically treated as a single entry in the new `log_parsers` list.
+The application will assume the `log_filename` is `autoinst-log.txt` and the `name` is "Autoinst Log".
+`config_ver:` can be also used to detect if format is old or new one
 
 ## 2. Backend Changes
 

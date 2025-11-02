@@ -1,81 +1,121 @@
-config_ver: 1
+# Configuration file version.
+config_ver: 2
+
+# Settings for the caching mechanism.
 cache:
+  # Directory where cache files will be stored. Defaults to ./.cache if not specified.
   cache_dir: '.cache'
+
+# The maximum number of related openQA jobs to discover and fetch,
+# starting from the initial URL. Defaults to 10.
 max_jobs_to_explore: 10
-autoinst_parser:
-  - name: SAPHanaSR
-    match_name: |-
-      .*(?P<name>SAPHanaSR-ScaleUp-PerfOpt).*
-    channels:
-      - name: "module_start"
-        type: "module"
-        pattern: |-
-          starting (?P<module>\S+) tests/\S+\.pm
 
-      - name: "module_finish"
-        type: "module"
-        pattern: |-
-          finished (?P<module>\S+) \S+ (runtime: \d+ s)
-  - name: multimachine
-    match_name: |-
-      .*(?P<name>support_?server|\d?nodes?_?\d+|qnetd_server|sles4sap_ensa_ers_node).*
-    channels:
-      - name: "error_mutex_lock_owner_finished"
-        type: "error"
-        pattern: |-
-          .*acquiring mutex '(?P<mutex>[^']+)': lock owner already finished
+# This is the most important section, defining how logs are processed.
+# The application iterates through this list of log-specific parsers.
+log_parsers:
+  - name: "Autoinst Log"
+    log_filename: "autoinst-log.txt"
+    # The application iterates through this list and uses the first parser whose `match_name` regex matches the openQA job name.
+    patterns:
+      # "autoinst-log.txt" parser for SAPHanaSR jobs
+      - name: SAPHanaSR
+        # A regular expression used to associate a job with this parser.
+        # It must contain a named capture group `(?P<name>...)` which is used to extract a short, human-readable name for display in the UI.
+        match_name: |-
+          .*(?P<name>SAPHanaSR-ScaleUp-PerfOpt).*
+        # A list of channel objects that define the specific log lines to extract as events.
+        channels:
+          - name: "module_start"
+            type: "module"
+            pattern: |-
+              starting (?P<module>\S+) tests/\S+\.pm
 
-      - name: "error_barrier_timeout"
-        type: "error"
-        pattern: |-
-          .*barrier '(?P<barrier>[^']+)': timeout
+          - name: "module_finish"
+            type: "module"
+            pattern: |-
+              finished (?P<module>\S+) \S+ (runtime: \d+ s)
+      # "autoinst-log.txt" parser for multimachine jobs
+      - name: multimachine
+        # A regular expression used to associate a job with this parser.
+        match_name: |-
+          .*(?P<name>support_?server|\d?nodes?_?\d+|qnetd_server|sles4sap_ensa_ers_node).*
+        # A list of channel objects that define the specific log lines to extract as events.
+        channels:
+          # Channels for errors
+          - name: "error_mutex_lock_owner_finished"
+            type: "error"
+            pattern: |-
+              .*acquiring mutex '(?P<mutex>[^']+)': lock owner already finished
 
-      - name: "state_paused_on_lock"
-        type: "waiting"
-        pattern: |-
-          .*testapi::record_info.*title="Paused(?P<duration>[\s\dms]*)", output="Wait for.*
+          - name: "error_barrier_timeout"
+            type: "error"
+            pattern: |-
+              .*barrier '(?P<barrier>[^']+)': timeout
 
-      - name: "state_barrier_not_released"
-        type: "waiting"
-        pattern: |-
-          barrier '(?P<barrier>[^']+)'.*not released.*sleeping.*
+          # Channels for waiting states
+          - name: "state_paused_on_lock"
+            type: "waiting"
+            pattern: |-
+              .*testapi::record_info.*title="Paused(?P<duration>[\s\dms]*)", output="Wait for.*
 
-      - name: "mutex_lock_unavailable"
-        type: "waiting"
-        pattern: |-
-          mutex lock '(?P<mutex>[^']+)'.*unavailable.*sleeping.*
-          
-      - name: "mutex_create"
-        type: "mutex"
-        pattern: |-
-          mutex create '(?P<mutex>[^']+)'
+          - name: "state_barrier_not_released"
+            type: "waiting"
+            pattern: |-
+              barrier '(?P<barrier>[^']+)'.*not released.*sleeping.*
 
-      - name: "mutex_lock"
-        type: "mutex"
-        pattern: |-
-          mutex lock '(?P<mutex>[^']+)'(?!.*unavailable)
+          - name: "mutex_lock_unavailable"
+            type: "waiting"
+            pattern: |-
+              mutex lock '(?P<mutex>[^']+)'.*unavailable.*sleeping.*
+              
+          # Channels for mutex events
+          - name: "mutex_create"
+            type: "mutex"
+            pattern: |-
+              mutex create '(?P<mutex>[^']+)'
 
-      - name: "mutex_unlock"
-        type: "mutex"
-        pattern: |-
-          mutex unlock '(?P<mutex>[^']+)'
+          - name: "mutex_lock"
+            type: "mutex"
+            pattern: |-
+              mutex lock '(?P<mutex>[^']+)'(?!.*unavailable)
 
-      - name: "barrier_create"
-        type: "barrier"
-        pattern: |-
-          barrier create '(?P<barrier>[^']+)'
+          - name: "mutex_unlock"
+            type: "mutex"
+            pattern: |-
+              mutex unlock '(?P<mutex>[^']+)'
 
-      - name: "barrier_wait"
-        type: "barrier"
-        pattern: |-
-          barrier wait '(?P<barrier>[^']+)'
+          # Channels for barrier events
+          - name: "barrier_create"
+            type: "barrier"
+            pattern: |-
+              barrier create '(?P<barrier>[^']+)'
 
-      - name: "module_start"
-        type: "module"
-        pattern: |-
-          starting (?P<module>\S+) tests/\S+\.pm
+          - name: "barrier_wait"
+            type: "barrier"
+            pattern: |-
+              barrier wait '(?P<barrier>[^']+)'
 
-      - name: "module_finish"
-        type: "module"
-        pattern: |-
-          finished (?P<module>\S+) \S+ (runtime: \d+ s)
+          # Channels for module start and finish
+          - name: "module_start"
+            type: "module"
+            pattern: |-
+              starting (?P<module>\S+) tests/\S+\.pm
+
+          - name: "module_finish"
+            type: "module"
+            pattern: |-
+              finished (?P<module>\S+) \S+ (runtime: \d+ s)
+  - name: "Serial terminal"
+    log_filename: "serial-terminal.txt"
+    patterns:
+      # "serial-terminal.txt" parser for SAPHanaSR jobs
+      - name: SAPHanaSR
+        # A regular expression used to associate a job with this parser.
+        # It must contain a named capture group `(?P<name>...)` which is used to extract a short, human-readable name for display in the UI.
+        match_name: |-
+          .*(?P<name>SAPHanaSR-ScaleUp-PerfOpt).*
+        channels:
+          - name: "ping command"
+            type: "command"
+            pattern: |-
+              > ping -c \d (?P<ip_address>.*)
