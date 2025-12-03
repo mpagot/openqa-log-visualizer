@@ -36,3 +36,5 @@ static-backend-mypy-strict:
 test-backend: ## Run backend tests
 	uv run pytest -vv -o log_cli=true -o log_cli_level=10 tests/backend/
 
+test-backend-coverage: ## Run backend tests with coverage
+	uv run pytest -vv --cov=app --cov-report=html -o log_cli=true -o log_cli_level=10 tests/backend/

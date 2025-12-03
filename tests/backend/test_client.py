@@ -150,3 +150,22 @@ def test_get_log_content_http_error(mock_openqa_client, app_logger):
         match="Failed to download log autoinst-log.txt for job 123: HTTP Error",
     ):
         wrapper.get_log_content("123", "autoinst-log.txt")
+
+
+def test_download_log_to_file_error_handling(mock_openqa_client, app_logger, tmp_path):
+    wrapper = OpenQAClientWrapper("https://fake.host/tests/1", app_logger)
+    destination_path = tmp_path / "autoinst-log.txt"
+    mock_openqa_client.session.get.side_effect = requests.exceptions.RequestException(
+        "Connection failed"
+    )
+
+    with pytest.raises(
+        OpenQAClientLogDownloadError, match="Failed to download log 'autoinst-log.txt' for job 1: Connection failed"
+    ):
+        wrapper.download_log_to_file("1", "autoinst-log.txt", str(destination_path))
+
+
+def test_get_job_url(app_logger):
+    client = OpenQAClientWrapper("https://fake.host/tests/1", app_logger)
+    actual = client.get_job_url("foo")
+    assert actual == "https://fake.host/tfoo"
